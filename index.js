@@ -1,5 +1,5 @@
 const express = require("express");
-const mongoose = require("mongoose");
+const pool = require("./db");
 const session = require("express-session");
 const bcrypt = require("bcrypt");
 const http = require("http");
@@ -12,32 +12,11 @@ const io = new Server(server);
 
 app.use(express.static("public"));
 
-// mongoose.connect("mongodb://127.0.0.1:27017/chatApp");
-mongoose
-  .connect("mongodb://127.0.0.1:27017/chatApp", {
-    useNewUrlParser: true,
-    useUnifiedTopology: true,
-  })
-  .then(() => console.log("Connected to MongoDB"))
-  .catch((err) => console.error("MongoDB connection error:", err));
-
-const UserSchema = new mongoose.Schema({
-  username: String,
-  password: String, // hashed
-});
-
-const ChatSchema = new mongoose.Schema({
-  sender: String,
-  message: String,
-  timestamp: { type: Date, default: Date.now },
-});
 const sessionMiddleware = session({
   secret: "supersecretkey",
   resave: false,
   saveUninitialized: false,
 });
-const User = mongoose.model("User", UserSchema);
-const ChatMessage = mongoose.model("ChatMessage", ChatSchema);
 
 // Session middleware
 app.use(sessionMiddleware);
@@ -67,7 +46,11 @@ app.get("/login", (req, res) => {
 app.post("/login", async (req, res) => {
   const { username, password } = req.body;
 
-  const user = await User.findOne({ username, password });
+  const { rows } = await pool.query(
+    "SELECT id, username FROM users WHERE username = $1 AND password = $2",
+    [username, password],
+  );
+  const user = rows[0];
   if (!user) return res.send("Invalid credentials");
 
   // const valid = await bcrypt.compare(password, user.password);
@@ -98,16 +81,18 @@ io.on("connection", async (socket) => {
   const username = socket.request.session.user.username;
 
   // Send past messages
-  const pastMessages = await ChatMessage.find().sort({ timestamp: 1 });
+  const { rows: pastMessages } = await pool.query(
+    'SELECT id, sender, message, created_at AS "timestamp" FROM chat_messages ORDER BY created_at ASC',
+  );
   socket.emit("past messages", pastMessages);
 
   // Handle new message
   socket.on("chat message", async (data) => {
-    const msg = new ChatMessage({
-      sender: username,
-      message: data,
-    });
-    const savedMsg = await msg.save();
+    const { rows } = await pool.query(
+      'INSERT INTO chat_messages (sender, message) VALUES ($1, $2) RETURNING id, sender, message, created_at AS "timestamp"',
+      [username, data],
+    );
+    const savedMsg = rows[0];
     io.emit("chat message", savedMsg);
   });
 });
