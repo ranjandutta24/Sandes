@@ -246,43 +246,48 @@
 
       .day::before, .day::after { content: ""; flex: 1; height: 1px; background: var(--rule); }
 
-      .msg { display: flex; flex-direction: column; align-items: flex-start; margin-top: 14px; }
-      .msg.cont { margin-top: 4px; }
-      .msg .from { font-size: 0.8125rem; font-weight: 600; margin: 0 0 5px 4px; }
+      .msg { display: flex; flex-direction: column; align-items: flex-start; margin-top: 10px; }
+      .msg.cont { margin-top: 2px; }
+      .msg .from { font-size: 0.75rem; font-weight: 600; margin: 0 0 3px 4px; }
       .msg.cont .from, .msg.mine .from, .chat.direct .msg .from { display: none; }
 
       .bubble {
+        position: relative;
         max-width: min(62ch, 78%);
-        padding: 11px 16px 9px;
+        padding: 6px 12px 6px;
         background: var(--paper);
         border: 1px solid #d6e0ea;
-        border-radius: 4px 18px 18px 18px;
+        border-radius: 4px 14px 14px 14px;
         box-shadow: 0 1px 0 rgba(27, 42, 71, 0.06);
-        font-size: 1rem;
-        line-height: 1.5;
+        font-size: 0.9375rem;
+        line-height: 1.4;
         overflow-wrap: anywhere;
       }
 
       .bubble .text { white-space: pre-wrap; }
-      .msg.cont .bubble { border-top-left-radius: 18px; }
+      .msg.cont .bubble { border-top-left-radius: 14px; }
 
-      .bubble time { display: block; margin-top: 3px; font-size: 0.75rem; color: var(--slate); text-align: right; }
+      /* time sits at the end of the last text line; an invisible copy reserves its space */
+      .bubble time { font-size: 0.6875rem; line-height: 1; color: var(--slate); white-space: nowrap; }
+      .bubble .text time { position: absolute; right: 12px; bottom: 7px; }
+      .bubble .stamp-space { display: inline-block; visibility: hidden; margin-left: 10px; font-size: 0.6875rem; line-height: 1; }
+      .bubble > time { display: block; text-align: right; margin-top: 2px; }
 
       .msg.mine { align-items: flex-end; }
 
       .msg.mine .bubble {
         background: var(--ink); border-color: var(--ink); color: var(--paper);
-        border-radius: 18px 4px 18px 18px;
+        border-radius: 14px 4px 14px 14px;
       }
 
-      .msg.mine.cont .bubble { border-top-right-radius: 18px; }
+      .msg.mine.cont .bubble { border-top-right-radius: 14px; }
       .msg.mine .bubble time { color: #a9b6cb; }
 
       /* attachments inside bubbles */
-      .files { display: flex; flex-direction: column; gap: 8px; margin: 2px 0 6px; }
+      .files { display: flex; flex-direction: column; gap: 6px; margin: 0 -6px 4px; padding-top: 0; }
       .files + .text { margin-top: 2px; }
 
-      .shot { display: block; border-radius: 10px; overflow: hidden; line-height: 0; }
+      .shot { display: block; border-radius: 9px; overflow: hidden; line-height: 0; }
 
       .shot img {
         max-width: min(320px, 100%);
@@ -293,8 +298,8 @@
 
       .file {
         display: flex; align-items: center; gap: 12px;
-        min-width: 220px;
-        padding: 10px 12px;
+        min-width: 200px;
+        padding: 8px 10px;
         border-radius: 10px;
         background: #eef3f8;
         color: var(--ink);
@@ -581,8 +586,7 @@
 
     <script src="/socket.io/socket.io.js"></script>
     <script>
-      const MAX_FILES = 5;
-      const MAX_MB = 10;
+      const MAX_FILES = 20; // no size limit (LAN)
 
       const $ = (id) => document.getElementById(id);
       const appEl = $("app"), chatEl = $("chat"), feed = $("feed"), list = $("messages");
@@ -726,10 +730,12 @@
         if (m.attachments && m.attachments.length) {
           bubble.append(el("div", { className: "files" }, m.attachments.map(renderAttachment)));
         }
-        if (m.message) bubble.append(el("div", { className: "text" }, m.message)); // text only, never HTML
-
         const time = el("time", { dateTime: when.toISOString() }, when.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" }));
-        bubble.append(time);
+        if (m.message) {
+          // text only, never HTML
+          bubble.append(el("div", { className: "text" }, m.message, el("span", { className: "stamp-space", ariaHidden: "true" }, time.textContent), time));
+        }
+        else bubble.append(time);
 
         row.append(from, bubble);
         list.append(row);
@@ -814,7 +820,6 @@
         statusEl.textContent = "";
         for (const f of files) {
           if (pendingFiles.length >= MAX_FILES) { statusEl.textContent = `You can attach up to ${MAX_FILES} files at once.`; break; }
-          if (f.size > MAX_MB * 1048576) { statusEl.textContent = `${f.name} is larger than ${MAX_MB} MB.`; continue; }
           pendingFiles.push(f);
         }
         renderPending();
@@ -863,8 +868,22 @@
         statusEl.style.color = "var(--slate)";
         statusEl.textContent = pendingFiles.length === 1 ? "Sending 1 file…" : `Sending ${pendingFiles.length} files…`;
         try {
-          const r = await fetch(`/api/conversations/${activeId}/messages`, { method: "POST", body: fd });
-          if (!r.ok) throw new Error((await r.json().catch(() => ({}))).message || "Message not sent. Try again.");
+          const label = statusEl.textContent.replace("…", "");
+          await new Promise((resolve, reject) => {
+            const xhr = new XMLHttpRequest();
+            xhr.open("POST", `/api/conversations/${activeId}/messages`);
+            xhr.upload.onprogress = (ev) => {
+              if (ev.lengthComputable) statusEl.textContent = `${label}… ${Math.floor((ev.loaded / ev.total) * 100)}%`;
+            };
+            xhr.onload = () => {
+              if (xhr.status >= 200 && xhr.status < 300) return resolve();
+              let msg = "Message not sent. Try again.";
+              try { msg = JSON.parse(xhr.responseText).message || msg; } catch {}
+              reject(new Error(msg));
+            };
+            xhr.onerror = () => reject(new Error("Upload failed. Check the connection and try again."));
+            xhr.send(fd);
+          });
           input.value = "";
           pendingFiles = [];
           renderPending();

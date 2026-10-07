@@ -11,6 +11,9 @@ const multer = require("multer");
 
 const app = express();
 const server = http.createServer(app);
+// Big uploads can take a while: don't cut off slow requests (Node defaults to 5 min)
+server.requestTimeout = 0;
+server.timeout = 0;
 const io = new Server(server);
 
 // ------------------------------------------------------------------
@@ -19,8 +22,8 @@ const io = new Server(server);
 const UPLOAD_DIR = path.join(__dirname, "uploads");
 fs.mkdirSync(UPLOAD_DIR, { recursive: true });
 
-const MAX_FILE_MB = 10;
-const MAX_FILES = 5;
+// No file-size limit (LAN use). Only the number of files per message is capped.
+const MAX_FILES = 20;
 
 const upload = multer({
     storage: multer.diskStorage({
@@ -28,7 +31,7 @@ const upload = multer({
         filename: (req, file, cb) =>
             cb(null, crypto.randomUUID() + path.extname(file.originalname).toLowerCase()),
     }),
-    limits: { fileSize: MAX_FILE_MB * 1024 * 1024, files: MAX_FILES },
+    limits: { files: MAX_FILES },
 });
 
 // ------------------------------------------------------------------
@@ -297,9 +300,7 @@ app.post("/api/conversations/:id/messages", requireUser, (req, res) => {
         if (err) {
             removeFiles(files);
             const message =
-                err.code === "LIMIT_FILE_SIZE"
-                    ? `Each file must be ${MAX_FILE_MB} MB or smaller`
-                    : err.code === "LIMIT_FILE_COUNT"
+                err.code === "LIMIT_FILE_COUNT"
                       ? `You can attach up to ${MAX_FILES} files at once`
                       : "Upload failed";
             return res.status(400).json({ message });
@@ -346,7 +347,10 @@ app.get("/attachments/:id", requireUser, async (req, res) => {
         "Content-Disposition",
         `${inline && !req.query.download ? "inline" : "attachment"}; filename*=UTF-8''${encodeURIComponent(a.file_name)}`,
     );
-    res.sendFile(path.join(UPLOAD_DIR, a.stored_name));
+    res.sendFile(path.join(UPLOAD_DIR, a.stored_name), (err) => {
+        // File deleted from disk (or download aborted) - answer cleanly instead of crashing the request
+        if (err && !res.headersSent) res.status(404).send("File not found");
+    });
 });
 
 // ------------------------------------------------------------------
