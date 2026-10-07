@@ -97,6 +97,8 @@ io.on("connection", async (socket) => {
   });
 });
 
-server.listen(9000, () => {
-  console.log("Server is running on http://localhost:9000");
+pool.ready.then(() => {
+  server.listen(9000, () => {
+    console.log("Server is running on http://localhost:9000");
+  });
 });

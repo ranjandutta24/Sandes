@@ -61,3 +61,6 @@ typings/
 .next
 
 package-lock.json
+
+# User-uploaded attachments
+uploads/
