@@ -10,6 +10,7 @@
       href="https://fonts.googleapis.com/css2?family=Bodoni+Moda:ital,opsz,wght@0,6..96,400..900;1,6..96,400..900&family=Figtree:wght@400;500;600&display=swap"
       rel="stylesheet"
     />
+    <link rel="stylesheet" href="/crackers.css" />
     <style>
       :root {
         --aerogramme: #e3ebf2;
@@ -53,7 +54,7 @@
       .app {
         height: 100dvh;
         display: grid;
-        grid-template-columns: 300px 1fr;
+        grid-template-columns: 300px minmax(0, 1fr);
       }
 
       /* ================= Sidebar ================= */
@@ -209,6 +210,7 @@
         position: relative;
         display: grid;
         grid-template-rows: auto 1fr auto;
+        grid-template-columns: minmax(0, 1fr);
         min-height: 0;
         min-width: 0;
       }
@@ -471,7 +473,7 @@
 
       /* ================= Mobile ================= */
       @media (max-width: 760px) {
-        .app { grid-template-columns: 1fr; }
+        .app { grid-template-columns: minmax(0, 1fr); }
         .app .chat { display: none; }
         .app.in-chat .sidebar { display: none; }
         .app.in-chat .chat { display: grid; }
@@ -557,6 +559,9 @@
                 <input type="file" id="fileInput" multiple hidden />
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48" /></svg>
               </label>
+              <button class="cracker-btn" id="crackerBtn" type="button" title="Diwali crackers" aria-label="Diwali crackers" aria-expanded="false">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="10" cy="15" r="6.5" /><path d="M14.6 10.4c1-1.6 2-2.9 3.9-3.4" /><path d="M20.6 1.8v1.8M23 4.6h-1.8M22.4 2.4l-1.2 1.2" /></svg>
+              </button>
               <label for="msg" class="sr-only">Message</label>
               <input type="text" id="msg" placeholder="Write a message" maxlength="4000" />
               <button class="send" id="send" type="submit">
@@ -752,6 +757,7 @@
       new ResizeObserver(() => stick && (feed.scrollTop = feed.scrollHeight)).observe(list);
 
       async function openConversation(id) {
+        window.sandesCrackers?.reset();
         activeId = id;
         unread[id] = 0;
         const c = conversations.find((x) => x.id === id);
@@ -777,6 +783,7 @@
       }
 
       $("back").onclick = () => {
+        window.sandesCrackers?.reset();
         appEl.classList.remove("in-chat");
         activeId = null;
         renderSidebar();
@@ -949,5 +956,6 @@
         if (main && matchMedia("(min-width: 761px)").matches) openConversation(main.id);
       })();
     </script>
+    <script src="/crackers.js"></script>
   </body>
 </html>

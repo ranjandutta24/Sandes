@@ -354,6 +354,56 @@ app.get("/attachments/:id", requireUser, async (req, res) => {
 });
 
 // ------------------------------------------------------------------
+// Crackers (Diwali fun). Live events only, nothing is stored.
+//   cracker:place  -> someone puts a cracker down in a conversation
+//   cracker:stick  -> where their dhoop kathi (incense stick) is
+//   cracker:ignite -> fuse lit, everyone plays the blast
+//   cracker:remove -> cancelled (or the user disconnected)
+// ------------------------------------------------------------------
+const CRACKER_KINDS = new Set(["bomb", "rocket", "anar", "chakri", "ladi"]);
+const MAX_UNLIT_CRACKERS = 3;
+const unit = (n) => Math.min(1, Math.max(0, Number(n) || 0));
+
+function registerCrackers(socket) {
+    const user = socket.user;
+    const unlit = new Map(); // cracker id -> conversation id
+
+    socket.on("cracker:place", async (d) => {
+        try {
+            if (!d || !CRACKER_KINDS.has(d.kind) || !/^[a-f0-9]{8,32}$/i.test(String(d.id))) return;
+            if (unlit.size >= MAX_UNLIT_CRACKERS || unlit.has(d.id)) return;
+            const conversationId = Number(d.conversationId);
+            if (!(await canAccess(user.id, conversationId))) return;
+            unlit.set(d.id, conversationId);
+            socket.to(`conv:${conversationId}`).emit("cracker:place", {
+                id: d.id, kind: d.kind, x: unit(d.x), y: unit(d.y), conversationId, by: user.username,
+            });
+        } catch (err) {
+            console.error("cracker:place", err);
+        }
+    });
+
+    socket.on("cracker:stick", (d) => {
+        const conv = d && unlit.get(d.id);
+        if (!conv) return;
+        socket.volatile.to(`conv:${conv}`).emit("cracker:stick", { id: d.id, x: unit(d.x), y: unit(d.y), by: user.username });
+    });
+
+    const finish = (event) => (d) => {
+        const conv = d && unlit.get(d.id);
+        if (!conv) return;
+        unlit.delete(d.id);
+        socket.to(`conv:${conv}`).emit(event, { id: d.id });
+    };
+    socket.on("cracker:ignite", finish("cracker:ignite"));
+    socket.on("cracker:remove", finish("cracker:remove"));
+
+    socket.on("disconnect", () => {
+        for (const [id, conv] of unlit) socket.to(`conv:${conv}`).emit("cracker:remove", { id });
+    });
+}
+
+// ------------------------------------------------------------------
 // Socket.io
 // Accepts either: mobile app (io({ auth: { username } })) or browser (session cookie)
 // ------------------------------------------------------------------
@@ -374,6 +424,7 @@ io.use(async (socket, next) => {
 
 io.on("connection", async (socket) => {
     const user = socket.user;
+    registerCrackers(socket);
 
     // Rooms: personal room + main room + all your direct chats
     socket.join(`user:${user.id}`);
