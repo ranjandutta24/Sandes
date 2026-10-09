@@ -359,22 +359,33 @@ app.get("/attachments/:id", requireUser, async (req, res) => {
 //   cracker:stick  -> where their dhoop kathi (incense stick) is
 //   cracker:ignite -> fuse lit, everyone plays the blast
 //   cracker:remove -> cancelled (or the user disconnected)
+//   cracker:throw  -> rosun bomb thrown at a spot (no fuse, bursts on landing)
+// A lit phuljhuri (sparkler) keeps sending cracker:stick while it's waved around.
 // ------------------------------------------------------------------
-const CRACKER_KINDS = new Set(["bomb", "rocket", "anar", "chakri", "ladi"]);
+const CRACKER_KINDS = new Set([
+    "kalipotka", "bomb", "dodoma", "ladi", "rocket", "skyshot", "udan",
+    "anar", "chakri", "phuljhuri", "mashal", "saap",
+]);
+const THROWN_KINDS = new Set(["rosun"]);
+const HELD_KINDS = new Set(["phuljhuri"]);
+const HELD_MS = 9000;
 const MAX_UNLIT_CRACKERS = 3;
+const CRACKER_ID = /^[a-f0-9]{8,32}$/i;
 const unit = (n) => Math.min(1, Math.max(0, Number(n) || 0));
 
 function registerCrackers(socket) {
     const user = socket.user;
-    const unlit = new Map(); // cracker id -> conversation id
+    const unlit = new Map(); // cracker id -> { conv, kind }
+    const held = new Map();  // lit phuljhuri id -> conversation id
+    let lastThrow = 0;
 
     socket.on("cracker:place", async (d) => {
         try {
-            if (!d || !CRACKER_KINDS.has(d.kind) || !/^[a-f0-9]{8,32}$/i.test(String(d.id))) return;
+            if (!d || !CRACKER_KINDS.has(d.kind) || !CRACKER_ID.test(String(d.id))) return;
             if (unlit.size >= MAX_UNLIT_CRACKERS || unlit.has(d.id)) return;
             const conversationId = Number(d.conversationId);
             if (!(await canAccess(user.id, conversationId))) return;
-            unlit.set(d.id, conversationId);
+            unlit.set(d.id, { conv: conversationId, kind: d.kind });
             socket.to(`conv:${conversationId}`).emit("cracker:place", {
                 id: d.id, kind: d.kind, x: unit(d.x), y: unit(d.y), conversationId, by: user.username,
             });
@@ -383,23 +394,45 @@ function registerCrackers(socket) {
         }
     });
 
+    socket.on("cracker:throw", async (d) => {
+        try {
+            if (!d || !THROWN_KINDS.has(d.kind) || !CRACKER_ID.test(String(d.id))) return;
+            const t = Date.now();
+            if (t - lastThrow < 250) return;
+            lastThrow = t;
+            const conversationId = Number(d.conversationId);
+            if (!(await canAccess(user.id, conversationId))) return;
+            socket.to(`conv:${conversationId}`).emit("cracker:throw", {
+                id: d.id, kind: d.kind, x: unit(d.x), y: unit(d.y), conversationId, by: user.username,
+            });
+        } catch (err) {
+            console.error("cracker:throw", err);
+        }
+    });
+
     socket.on("cracker:stick", (d) => {
-        const conv = d && unlit.get(d.id);
+        if (!d) return;
+        const conv = unlit.get(d.id)?.conv ?? held.get(d.id);
         if (!conv) return;
         socket.volatile.to(`conv:${conv}`).emit("cracker:stick", { id: d.id, x: unit(d.x), y: unit(d.y), by: user.username });
     });
 
     const finish = (event) => (d) => {
-        const conv = d && unlit.get(d.id);
-        if (!conv) return;
+        const entry = d && unlit.get(d.id);
+        if (!entry) return;
         unlit.delete(d.id);
-        socket.to(`conv:${conv}`).emit(event, { id: d.id });
+        if (event === "cracker:ignite" && HELD_KINDS.has(entry.kind)) {
+            held.set(d.id, entry.conv);
+            setTimeout(() => held.delete(d.id), HELD_MS);
+        }
+        socket.to(`conv:${entry.conv}`).emit(event, { id: d.id });
     };
     socket.on("cracker:ignite", finish("cracker:ignite"));
     socket.on("cracker:remove", finish("cracker:remove"));
 
     socket.on("disconnect", () => {
-        for (const [id, conv] of unlit) socket.to(`conv:${conv}`).emit("cracker:remove", { id });
+        for (const [id, { conv }] of unlit) socket.to(`conv:${conv}`).emit("cracker:remove", { id });
+        held.clear();
     });
 }
 
