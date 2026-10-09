@@ -101,6 +101,23 @@ CREATE INDEX IF NOT EXISTS idx_attachments_message
     ON sandes.attachments (message_id);
 
 -- ---------------------------------------------------------------
+-- Shared drawing board: one board per conversation, one row per drawn shape
+--   item_key -> id made by the browser, so everyone can refer to the same shape
+--   data     -> {"t": "pen|line|arrow|rect|ellipse|text", "c": "#rrggbb", "w": width,
+--                "p": [x1, y1, x2, y2, ...], "s": "label text", "f": filled?}
+--               coordinates are on a fixed 1600 x 1000 board
+-- ---------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS sandes.board_items (
+    id               BIGSERIAL    PRIMARY KEY,
+    conversation_id  INTEGER      NOT NULL REFERENCES sandes.conversations (id) ON DELETE CASCADE,
+    item_key         VARCHAR(32)  NOT NULL,
+    author_id        INTEGER      REFERENCES sandes.users (id) ON DELETE SET NULL,
+    data             JSONB        NOT NULL,
+    created_at       TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    UNIQUE (conversation_id, item_key)
+);
+
+-- ---------------------------------------------------------------
 -- Default user (password stored as plain text, matching current login logic)
 -- ---------------------------------------------------------------
 INSERT INTO sandes.users (username, password)

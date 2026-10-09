@@ -11,6 +11,7 @@
       rel="stylesheet"
     />
     <link rel="stylesheet" href="/crackers.css" />
+    <link rel="stylesheet" href="/board.css" />
     <style>
       :root {
         --aerogramme: #e3ebf2;
@@ -759,6 +760,7 @@
       async function openConversation(id) {
         window.sandesCrackers?.reset();
         activeId = id;
+        window.sandesBoard?.switchTo(id);
         unread[id] = 0;
         const c = conversations.find((x) => x.id === id);
         appEl.classList.add("in-chat");
@@ -786,6 +788,7 @@
         window.sandesCrackers?.reset();
         appEl.classList.remove("in-chat");
         activeId = null;
+        window.sandesBoard?.switchTo(null);
         renderSidebar();
       };
 
@@ -957,5 +960,6 @@
       })();
     </script>
     <script src="/crackers.js"></script>
+    <script src="/board.js"></script>
   </body>
 </html>

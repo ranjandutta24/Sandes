@@ -384,6 +384,7 @@ function registerCrackers(socket) {
             if (!d || !CRACKER_KINDS.has(d.kind) || !CRACKER_ID.test(String(d.id))) return;
             if (unlit.size >= MAX_UNLIT_CRACKERS || unlit.has(d.id)) return;
             const conversationId = Number(d.conversationId);
+            if (boardIsOn(conversationId)) return; // no crackers while the board is open
             if (!(await canAccess(user.id, conversationId))) return;
             unlit.set(d.id, { conv: conversationId, kind: d.kind });
             socket.to(`conv:${conversationId}`).emit("cracker:place", {
@@ -401,6 +402,7 @@ function registerCrackers(socket) {
             if (t - lastThrow < 250) return;
             lastThrow = t;
             const conversationId = Number(d.conversationId);
+            if (boardIsOn(conversationId)) return;
             if (!(await canAccess(user.id, conversationId))) return;
             socket.to(`conv:${conversationId}`).emit("cracker:throw", {
                 id: d.id, kind: d.kind, x: unit(d.x), y: unit(d.y), conversationId, by: user.username,
@@ -421,6 +423,8 @@ function registerCrackers(socket) {
         const entry = d && unlit.get(d.id);
         if (!entry) return;
         unlit.delete(d.id);
+        // the board opened while this one was waiting: everyone already cleared it, just drop it
+        if (event === "cracker:ignite" && boardIsOn(entry.conv)) return;
         if (event === "cracker:ignite" && HELD_KINDS.has(entry.kind)) {
             held.set(d.id, entry.conv);
             setTimeout(() => held.delete(d.id), HELD_MS);
@@ -433,6 +437,191 @@ function registerCrackers(socket) {
     socket.on("disconnect", () => {
         for (const [id, { conv }] of unlit) socket.to(`conv:${conv}`).emit("cracker:remove", { id });
         held.clear();
+    });
+}
+
+// ------------------------------------------------------------------
+// Shared drawing board (one per conversation, saved in board_items).
+//   board:status {conversationId}        -> ack { viewers }      (is anyone on the board?)
+//   board:join   {conversationId}        -> ack { items, viewers }
+//   board:leave  {conversationId}
+//   board:add    {conversationId, item}  -> saved, sent to everyone on the board
+//   board:remove {conversationId, ids}   -> erased / undone
+//   board:clear  {conversationId}
+//   board:live   {conversationId, x, y, d} -> cursor + shape being drawn (not saved)
+//   board:presence {conversationId, viewers} goes to every member of the chat, so they
+//   can see the board is open. While anyone is on it, crackers are off in that chat.
+// ------------------------------------------------------------------
+const BOARD_W = 1600;
+const BOARD_H = 1000;
+const BOARD_MAX_ITEMS = 5000;
+const BOARD_ITEM_ID = /^[a-f0-9]{8,32}$/i;
+const BOARD_POINTS = { pen: [2, 8000], line: [4, 4], arrow: [4, 4], rect: [4, 4], ellipse: [4, 4], text: [2, 2] };
+const boardViewers = new Map(); // conversation id -> Map(socket id -> username)
+
+const boardIsOn = (conversationId) => (boardViewers.get(conversationId)?.size || 0) > 0;
+const viewerNames = (conversationId) => [...new Set((boardViewers.get(conversationId) || new Map()).values())];
+
+function cleanBoardItem(it) {
+    if (!it || typeof it !== "object" || !BOARD_ITEM_ID.test(String(it.id))) return null;
+    const range = BOARD_POINTS[it.t];
+    if (!range || typeof it.c !== "string" || !/^#[0-9a-f]{6}$/i.test(it.c)) return null;
+    const w = Number(it.w);
+    if (!Number.isFinite(w) || w < 1 || w > 40) return null;
+    if (!Array.isArray(it.p) || it.p.length < range[0] || it.p.length > range[1] || it.p.length % 2) return null;
+    const p = [];
+    for (const v of it.p) {
+        const n = Number(v);
+        if (!Number.isFinite(n)) return null;
+        p.push(Math.round(Math.min(BOARD_W * 2, Math.max(-BOARD_W, n)) * 10) / 10);
+    }
+    const out = { t: it.t, c: it.c.toLowerCase(), w, p };
+    if (it.t === "text") {
+        const s = typeof it.s === "string" ? it.s.trim().slice(0, 1000) : "";
+        if (!s) return null;
+        out.s = s;
+    }
+    if ((it.t === "rect" || it.t === "ellipse") && it.f) out.f = true;
+    return { id: String(it.id), data: out };
+}
+
+function sendPresence(conversationId) {
+    io.to(`conv:${conversationId}`).emit("board:presence", { conversationId, viewers: viewerNames(conversationId) });
+}
+
+function registerBoard(socket) {
+    const user = socket.user;
+    const joined = new Set(); // conversation ids this socket has the board open for
+    let bucket = 40, refill = Date.now(); // rate limit for saved changes
+
+    const allow = () => {
+        const t = Date.now();
+        bucket = Math.min(40, bucket + ((t - refill) / 1000) * 20);
+        refill = t;
+        if (bucket < 1) return false;
+        bucket -= 1;
+        return true;
+    };
+    const ack = (cb, v) => typeof cb === "function" && cb(v);
+    const onBoard = (d) => {
+        const id = Number(d && d.conversationId);
+        return joined.has(id) ? id : null;
+    };
+
+    function leave(conversationId) {
+        if (!joined.delete(conversationId)) return;
+        socket.leave(`board:${conversationId}`);
+        const viewers = boardViewers.get(conversationId);
+        if (viewers) {
+            viewers.delete(socket.id);
+            if (!viewers.size) boardViewers.delete(conversationId);
+        }
+        socket.to(`board:${conversationId}`).emit("board:live", { conversationId, sid: socket.id, gone: true });
+        sendPresence(conversationId);
+    }
+
+    socket.on("board:status", async (d, cb) => {
+        try {
+            const id = Number(d && d.conversationId);
+            if (!(await canAccess(user.id, id))) return ack(cb, { viewers: [] });
+            ack(cb, { viewers: viewerNames(id) });
+        } catch (err) {
+            console.error("board:status", err);
+            ack(cb, { viewers: [] });
+        }
+    });
+
+    socket.on("board:join", async (d, cb) => {
+        try {
+            const id = Number(d && d.conversationId);
+            if (!(await canAccess(user.id, id))) return ack(cb, { error: "You're not part of this conversation" });
+            const { rows } = await pool.query(
+                `SELECT b.item_key AS id, b.data, u.username AS by
+                 FROM board_items b LEFT JOIN users u ON u.id = b.author_id
+                 WHERE b.conversation_id = $1 ORDER BY b.id`,
+                [id],
+            );
+            joined.add(id);
+            socket.join(`board:${id}`);
+            if (!boardViewers.has(id)) boardViewers.set(id, new Map());
+            boardViewers.get(id).set(socket.id, user.username);
+            ack(cb, { items: rows.map((r) => ({ ...r.data, id: r.id, by: r.by })), viewers: viewerNames(id) });
+            sendPresence(id);
+        } catch (err) {
+            console.error("board:join", err);
+            ack(cb, { error: "Couldn't open the board. Try again." });
+        }
+    });
+
+    socket.on("board:leave", (d) => leave(Number(d && d.conversationId)));
+
+    socket.on("board:add", async (d, cb) => {
+        try {
+            const id = onBoard(d);
+            if (id == null || !allow()) return ack(cb, { ok: false });
+            const item = cleanBoardItem(d.item);
+            if (!item) return ack(cb, { ok: false });
+            const { rowCount } = await pool.query(
+                `INSERT INTO board_items (conversation_id, item_key, author_id, data)
+                 SELECT $1, $2, $3, $4
+                 WHERE (SELECT count(*) FROM board_items WHERE conversation_id = $1) < ${BOARD_MAX_ITEMS}
+                 ON CONFLICT (conversation_id, item_key) DO NOTHING`,
+                [id, item.id, user.id, item.data],
+            );
+            if (!rowCount) return ack(cb, { ok: false, full: true });
+            socket.to(`board:${id}`).emit("board:add", { conversationId: id, item: { ...item.data, id: item.id, by: user.username } });
+            ack(cb, { ok: true });
+        } catch (err) {
+            console.error("board:add", err);
+            ack(cb, { ok: false });
+        }
+    });
+
+    socket.on("board:remove", async (d) => {
+        try {
+            const id = onBoard(d);
+            if (id == null || !allow() || !Array.isArray(d.ids)) return;
+            const ids = d.ids.map(String).filter((k) => BOARD_ITEM_ID.test(k)).slice(0, 500);
+            if (!ids.length) return;
+            await pool.query("DELETE FROM board_items WHERE conversation_id = $1 AND item_key = ANY($2)", [id, ids]);
+            socket.to(`board:${id}`).emit("board:remove", { conversationId: id, ids });
+        } catch (err) {
+            console.error("board:remove", err);
+        }
+    });
+
+    socket.on("board:clear", async (d) => {
+        try {
+            const id = onBoard(d);
+            if (id == null || !allow()) return;
+            await pool.query("DELETE FROM board_items WHERE conversation_id = $1", [id]);
+            socket.to(`board:${id}`).emit("board:clear", { conversationId: id, by: user.username });
+        } catch (err) {
+            console.error("board:clear", err);
+        }
+    });
+
+    // Cursor + the shape someone is in the middle of drawing. Not saved, may be dropped.
+    socket.on("board:live", (d) => {
+        const id = onBoard(d);
+        if (id == null) return;
+        const x = Number(d.x), y = Number(d.y);
+        let draft = null;
+        if (d.d && typeof d.d === "object") {
+            const it = cleanBoardItem({ ...d.d, s: d.d.t === "text" ? "x" : d.d.s, p: d.d.p });
+            if (it) {
+                draft = { ...it.data, id: it.id, o: Math.max(0, Math.floor(Number(d.d.o) || 0)) };
+                if (draft.t === "text") delete draft.s;
+            }
+        } else if (d.d === false) draft = false;
+        socket.volatile.to(`board:${id}`).emit("board:live", {
+            conversationId: id, sid: socket.id, by: user.username,
+            x: Number.isFinite(x) ? x : null, y: Number.isFinite(y) ? y : null, d: draft,
+        });
+    });
+
+    socket.on("disconnect", () => {
+        for (const id of [...joined]) leave(id);
     });
 }
 
@@ -458,6 +647,7 @@ io.use(async (socket, next) => {
 io.on("connection", async (socket) => {
     const user = socket.user;
     registerCrackers(socket);
+    registerBoard(socket);
 
     // Rooms: personal room + main room + all your direct chats
     socket.join(`user:${user.id}`);

@@ -1589,7 +1589,7 @@
     crackerBtn.setAttribute("aria-expanded", "false");
   }
 
-  crackerBtn.addEventListener("click", () => (tray.hidden ? openTray() : closeTray()));
+  crackerBtn.addEventListener("click", () => (crackerBtn.disabled ? null : tray.hidden ? openTray() : closeTray()));
   document.addEventListener("pointerdown", (e) => {
     if (!tray.hidden && !tray.contains(e.target) && !crackerBtn.contains(e.target)) closeTray();
   });
@@ -1602,13 +1602,15 @@
   /* =====================================================================
    * Everyone else's crackers
    * ===================================================================== */
+  let blocked = false; // board open in this chat
+
   socket.on("cracker:place", (d) => {
-    if (!d || d.conversationId !== activeId || document.hidden || crackers.has(d.id) || !KINDS[d.kind]) return;
+    if (blocked || !d || d.conversationId !== activeId || document.hidden || crackers.has(d.id) || !KINDS[d.kind]) return;
     addCracker({ id: d.id, kind: d.kind, nx: d.x, ny: d.y, by: d.by });
   });
 
   socket.on("cracker:throw", (d) => {
-    if (!d || d.conversationId !== activeId || document.hidden || !KINDS[d.kind] || !KINDS[d.kind].thrown) return;
+    if (blocked || !d || d.conversationId !== activeId || document.hidden || !KINDS[d.kind] || !KINDS[d.kind].thrown) return;
     throwIt(d.kind, d.x, d.y);
   });
 
@@ -1625,7 +1627,7 @@
   socket.on("cracker:ignite", (d) => {
     const c = d && crackers.get(d.id);
     if (!c) return;
-    if (document.hidden) return removeCracker(c);
+    if (document.hidden || blocked) return removeCracker(c);
     ignite(c);
   });
 
@@ -1639,6 +1641,15 @@
   resize();
 
   window.sandesCrackers = {
+    // The shared board is open in this chat: no crackers until everyone closes it
+    setBlocked(on) {
+      on = !!on;
+      if (on === blocked) return;
+      blocked = on;
+      if (on) this.reset();
+      crackerBtn.disabled = on;
+      crackerBtn.title = on ? "Crackers are off while the board is open" : "Diwali crackers";
+    },
     // Called when you switch conversations: drop everything on screen
     reset() {
       cancelMode();
