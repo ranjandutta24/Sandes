@@ -5,9 +5,9 @@ const { Pool } = require("pg");
 const pool = new Pool({
   host: process.env.PGHOST || "localhost",
   port: Number(process.env.PGPORT) || 5432,
-  database: process.env.PGDATABASE || "sandes",
+  database: process.env.PGDATABASE || "postgres",
   user: process.env.PGUSER || "postgres",
-  password: process.env.PGPASSWORD || "randomforest",
+  password: process.env.PGPASSWORD || "root",
   // All unqualified table names (users, chat_messages) resolve to the "sandes" schema
   options: "-c search_path=sandes",
 });
