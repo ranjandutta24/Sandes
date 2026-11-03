@@ -1,4 +1,4 @@
-/* Sandes · shared drawing board
+/* Sandesh · shared drawing board
  *
  * One board per conversation, with pages. Everyone in the chat who opens it sees the same
  * drawing, live: other people's cursors and the shape they're drawing show up as they draw.
@@ -1443,15 +1443,19 @@
     });
   }
 
-  function renamePage(pg) {
-    const name = prompt("Page name", pg.name);
+  async function renamePage(pg) {
+    const name = await sandesUI.prompt("Rename this page", pg.name, { ok: "Rename", maxLength: 60 });
     if (!name || !name.trim() || name.trim() === pg.name) return;
     socket.emit("board:page:rename", { conversationId: conv, page: pg.id, name: name.trim() });
   }
 
-  function deletePage(pg) {
+  async function deletePage(pg) {
     const n = [...items.values()].filter((it) => it.page === pg.id).length;
-    if (!confirm(n ? `Delete “${pg.name}” and its ${n} ${n === 1 ? "shape" : "shapes"} for everyone?` : `Delete “${pg.name}”?`)) return;
+    const ok = await sandesUI.confirm(`Delete the page “${pg.name}”?`, {
+      ok: "Delete page", danger: true,
+      sub: n ? `Its ${n} ${n === 1 ? "shape goes" : "shapes go"} too, for everyone.` : null,
+    });
+    if (!ok) return;
     socket.emit("board:page:delete", { conversationId: conv, page: pg.id }, (res) => {
       if (!res || !res.ok) showToast((res && res.message) || "Couldn't delete the page");
     });
@@ -1481,10 +1485,10 @@
   undoBtn.onclick = undo;
   redoBtn.onclick = redo;
 
-  clearBtn.onclick = () => {
+  clearBtn.onclick = async () => {
     const mine = pageItems();
     if (!mine.length) return;
-    if (!confirm("Clear this page for everyone in this chat?")) return;
+    if (!(await sandesUI.confirm("Clear this page for everyone in this chat?", { ok: "Clear page", danger: true, sub: "Use Undo right after if you change your mind." }))) return;
     for (const it of mine) items.delete(it.id);
     selected = null;
     history = history.filter((h) => !(h.item && h.item.page === page));

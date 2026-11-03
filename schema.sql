@@ -336,3 +336,42 @@ INSERT INTO sandes.settings (key, value) VALUES
     ('users_can_create_groups', 'true'),    -- members may create groups and channels
     ('festival_theme',          '"none"')   -- none | diwali | holi | durga_puja | christmas
 ON CONFLICT (key) DO NOTHING;
+
+-- ---------------------------------------------------------------
+-- Calendar events
+--   conversation_id NULL -> a personal event only its creator sees;
+--   otherwise everyone in that chat sees it (and can say going / maybe / no)
+--   event_date / end_date / start_time / end_time are wall-clock (no time zone):
+--   start_time NULL = all day. end_date is for events that span several days.
+--   repeat: none | daily | weekly | monthly | yearly (birthdays, weekly stand-ups...)
+--   remind_minutes: remind this many minutes before (NULL = no reminder)
+-- ---------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS sandes.events (
+    id               SERIAL       PRIMARY KEY,
+    conversation_id  INTEGER      REFERENCES sandes.conversations (id) ON DELETE CASCADE,
+    title            VARCHAR(200) NOT NULL,
+    description      TEXT,
+    location         VARCHAR(200),
+    event_date       DATE         NOT NULL,
+    end_date         DATE,
+    start_time       TIME,
+    end_time         TIME,
+    repeat           VARCHAR(8)   NOT NULL DEFAULT 'none'
+        CHECK (repeat IN ('none', 'daily', 'weekly', 'monthly', 'yearly')),
+    color            VARCHAR(7)   NOT NULL DEFAULT '#2f5d8a',
+    remind_minutes   INTEGER      CHECK (remind_minutes IS NULL OR remind_minutes BETWEEN 0 AND 10080),
+    created_by       INTEGER      REFERENCES sandes.users (id) ON DELETE SET NULL,
+    created_at       TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    updated_at       TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    CHECK (end_date IS NULL OR end_date >= event_date)
+);
+CREATE INDEX IF NOT EXISTS idx_events_date ON sandes.events (event_date);
+CREATE INDEX IF NOT EXISTS idx_events_conversation ON sandes.events (conversation_id);
+
+CREATE TABLE IF NOT EXISTS sandes.event_rsvps (
+    event_id    INTEGER     NOT NULL REFERENCES sandes.events (id) ON DELETE CASCADE,
+    user_id     INTEGER     NOT NULL REFERENCES sandes.users (id) ON DELETE CASCADE,
+    status      VARCHAR(5)  NOT NULL CHECK (status IN ('yes', 'maybe', 'no')),
+    updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (event_id, user_id)
+);

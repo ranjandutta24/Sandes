@@ -1,4 +1,4 @@
-/* Sandes · Tasks + shared Notes (side panels in the chat)
+/* Sandesh · Tasks + shared Notes (side panels in the chat)
  *
  * Tasks: a to-do list per chat. Tick things off, assign them to someone, or turn a message
  * into a task from its menu. Everyone in the chat sees changes live.
@@ -197,8 +197,8 @@
       el("div", { className: "t-main" }, titleEl, el("div", { className: "t-row" }, who, meta)),
       el("div", { className: "t-acts" },
         chat.canWrite() ? iconBtn("edit", "Rename", "ibtn", rename) : null,
-        chat.canWrite() ? iconBtn("trash", "Delete task", "ibtn", () => {
-          if (!confirm("Delete this task?")) return;
+        chat.canWrite() ? iconBtn("trash", "Delete task", "ibtn", async () => {
+          if (!(await sandesUI.confirm(`Delete the task “${t.title.length > 60 ? t.title.slice(0, 60) + "…" : t.title}”?`, { ok: "Delete", danger: true }))) return;
           ask("task:delete", { id: t.id }).catch((e) => toast(e.message, true));
         }) : null));
   }

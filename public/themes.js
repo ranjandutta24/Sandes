@@ -1,4 +1,4 @@
-/* Sandes · festival themes (chosen by an admin in Settings)
+/* Sandesh · festival themes (chosen by an admin in Settings)
  *
  * Sets body[data-theme] for the decorations in themes.css, adds a greeting under the logo,
  * and runs a light background animation behind the messages: diya embers for Diwali,

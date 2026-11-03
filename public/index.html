@@ -3,14 +3,16 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Sandes</title>
+    <title>Sandesh</title>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
       href="https://fonts.googleapis.com/css2?family=Bodoni+Moda:ital,opsz,wght@0,6..96,400..900;1,6..96,400..900&family=Figtree:wght@400;500;600&display=swap"
       rel="stylesheet"
     />
+    <link rel="stylesheet" href="/ui.css" />
     <link rel="stylesheet" href="/crackers.css" />
+    <link rel="stylesheet" href="/calendar.css" />
     <link rel="stylesheet" href="/board.css" />
     <link rel="stylesheet" href="/panels.css" />
     <link rel="stylesheet" href="/themes.css" />
@@ -584,7 +586,7 @@
       <aside class="sidebar" aria-label="Conversations">
         <div class="brand">
           <svg class="mark" fill="currentColor" aria-hidden="true"><use href="#dove" /></svg>
-          <h1 class="wordmark"><span class="initial">S</span>andes</h1>
+          <h1 class="wordmark" title="Sandesh: Secure And Networked Digital Exchange for Seamless Human Communication"><span class="initial">S</span>andesh</h1>
         </div>
 
         <div class="side-search">
@@ -757,15 +759,19 @@
           <button class="pill-btn solid" type="submit">Change password</button>
           <p class="pf-msg" id="pfPassMsg" role="status"></p>
         </form>
+
+        <p class="pf-about"><span class="pf-brand"><span class="initial">S</span>andesh</span> <abbr class="full-form" title="Secure And Networked Digital Exchange for Seamless Human Communication"><b>S</b>ecure <b>A</b>nd <b>N</b>etworked <b>D</b>igital <b>E</b>xchange for <b>S</b>eamless <b>H</b>uman Communication</abbr></p>
       </div>
     </dialog>
 
     <script src="/socket.io/socket.io.js"></script>
+    <script src="/ui.js"></script>
     <script src="/chat.js"></script>
     <script src="/crackers.js"></script>
     <script src="/board.js"></script>
     <script src="/panels.js"></script>
     <script src="/themes.js"></script>
     <script src="/effects.js"></script>
+    <script src="/calendar.js"></script>
   </body>
 </html>

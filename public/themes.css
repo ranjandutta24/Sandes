@@ -1,4 +1,4 @@
-/* Sandes · festival themes (body[data-theme]) */
+/* Sandesh · festival themes (body[data-theme]) */
 
 /* the animation canvas sits behind the messages */
 .theme-canvas { position: absolute; inset: 0; width: 100%; height: 100%; z-index: 0; pointer-events: none; }

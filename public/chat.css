@@ -1,4 +1,4 @@
-/* Sandes · chat features (loaded after the page's base styles) */
+/* Sandesh · chat features (loaded after the page's base styles) */
 
 [hidden] { display: none !important; }
 
@@ -315,9 +315,18 @@
 
 .sysmsg time { font-size: 0.75rem; opacity: 0.8; }
 
-.fx-tag {
-  display: inline-block;
+.msg-foot, .solo-stamp.with-fx, .poll-stamp.with-fx {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
   margin-top: 4px;
+}
+
+.fx-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
   padding: 1px 8px;
   border: 0;
   border-radius: 999px;
@@ -822,3 +831,11 @@
 
 /* send effects overlay */
 .fx-canvas { position: fixed; inset: 0; width: 100vw; height: 100vh; pointer-events: none; z-index: 55; }
+.fx-tag .fx-e { font-size: 0.875rem; line-height: 1; }
+
+/* about line in the profile dialog */
+.pf-about { margin: 22px 0 0; padding-top: 16px; border-top: 1px solid #e1e8ef; font-size: 0.8125rem; line-height: 1.5; color: var(--slate); }
+.pf-brand { display: block; font-family: var(--serif); font-size: 1.125rem; color: var(--ink); }
+.pf-brand .initial { font-style: italic; }
+.full-form { text-decoration: none; font-family: var(--serif); font-style: italic; }
+.full-form b { font-style: normal; color: var(--postal-red); }

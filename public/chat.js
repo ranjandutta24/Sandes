@@ -1,4 +1,4 @@
-/* Sandes · chat client
+/* Sandesh · chat client
  *
  * Sidebar (groups, channels, direct chats, search), the message feed (replies, edits,
  * deletes, reactions, polls, read receipts, mentions), the composer, presence + typing,
@@ -200,6 +200,7 @@ function copyText(text) {
 
 let toastTimer = 0;
 function toast(msg, bad = false) {
+  if (window.sandesUI) return window.sandesUI.toast(msg, bad ? { bad: true } : {});
   const t = $("toast");
   t.textContent = msg;
   t.classList.toggle("bad", bad);
@@ -300,7 +301,7 @@ function renderSidebar() {
     directs.append(el("p", { className: "hint" }, "Private chats appear here. Use New to message someone."));
   }
   const total = conversations.reduce((n, c) => n + (c.unread || 0), 0);
-  document.title = total ? `(${total}) Sandes` : "Sandes";
+  document.title = total ? `(${total}) Sandesh` : "Sandesh";
 }
 
 async function loadConversations() {
@@ -492,23 +493,22 @@ function buildRow(m, prev, fresh) {
   } else {
     if (m.reply_to) bubble.append(quoteView(m.reply_to));
     if (m.attachments && m.attachments.length) bubble.append(el("div", { className: "files" }, m.attachments.map(renderAttachment)));
+    // a message sent with an effect gets a footer: [effect chip ........ time]
+    const fx = m.effect && EFFECTS.find((e) => e[0] === m.effect);
+    const fxTag = fx
+      ? el("button", { type: "button", className: "fx-tag", title: "Play the effect again", onclick: () => window.sandesEffects?.play(m.effect) },
+          el("span", { className: "fx-e" }, fx[2]), fx[1])
+      : null;
     if (m.kind === "poll" && m.poll) {
       bubble.classList.add("has-poll");
-      bubble.append(pollView(m), el("div", { className: "poll-stamp" }, stampFor(m, mine)));
-    } else if (m.message) {
+      bubble.append(pollView(m), el("div", { className: "poll-stamp" + (fxTag ? " with-fx" : "") }, fxTag, stampFor(m, mine)));
+    } else if (m.message && !fxTag) {
       const space = el("span", { className: "stamp-space" + (mine ? " mine" : "") + (m.edited_at ? " ed" : ""), ariaHidden: "true" }, clock(m.timestamp));
       bubble.append(el("div", { className: "text" }, richText(m.message), space, stampFor(m, mine)));
+    } else if (m.message) {
+      bubble.append(el("div", { className: "text" }, richText(m.message)), el("div", { className: "msg-foot" }, fxTag, stampFor(m, mine)));
     } else {
-      bubble.append(el("div", { className: "solo-stamp" }, stampFor(m, mine)));
-    }
-    if (m.effect) {
-      const fx = EFFECTS.find((e) => e[0] === m.effect);
-      if (fx) {
-        bubble.append(el("button", {
-          type: "button", className: "fx-tag", title: "Play the effect again",
-          onclick: () => window.sandesEffects?.play(m.effect),
-        }, `${fx[2]} ${fx[1]}`));
-      }
+      bubble.append(el("div", { className: "solo-stamp" + (fxTag ? " with-fx" : "") }, fxTag, stampFor(m, mine)));
     }
   }
 
@@ -655,6 +655,8 @@ async function openConversation(id, { focus = null } = {}) {
     closePop();
   }
   activeId = id;
+  window.sandesCalendar?.close();
+  window.sandesCalendar?.switchTo(id);
   window.sandesBoard?.switchTo(id);
   window.sandesPanels?.switchTo(id);
   appEl.classList.add("in-chat");
@@ -709,10 +711,21 @@ function leaveConversationView() {
   activeId = null;
   window.sandesBoard?.switchTo(null);
   window.sandesPanels?.switchTo(null);
+  window.sandesCalendar?.switchTo(null);
   renderSidebar();
 }
 
 $("back").onclick = leaveConversationView;
+
+// Log out only after a yes
+document.querySelector(".logout").addEventListener("click", async (e) => {
+  e.preventDefault();
+  const ok = await sandesUI.confirm("Log out of Sandesh?", {
+    ok: "Log out", danger: true, icon: "⏻",
+    sub: "You'll need your username (or user ID) and password to sign in again.",
+  });
+  if (ok) location.href = "/logout";
+});
 
 /** Scroll to a message (loading it first if it's not on screen) and flash it */
 async function jumpTo(mid) {
@@ -949,8 +962,8 @@ function openMenu(m, anchor, touch = false) {
     box.append(menuItem("task", "Add to tasks", () => window.sandesPanels.addTask(m.message, m.id)));
   }
   if (mine || state.can_manage) {
-    box.append(menuItem("trash", "Delete", () => {
-      if (!confirm("Delete this message for everyone?")) return;
+    box.append(menuItem("trash", "Delete", async () => {
+      if (!(await sandesUI.confirm("Delete this message for everyone?", { ok: "Delete", danger: true, sub: "It's replaced with “This message was deleted”." }))) return;
       ask("message:delete", { id: m.id }).catch((e) => toast(e.message, true));
     }, "danger"));
   }
@@ -1144,6 +1157,11 @@ function openPlusMenu(anchor) {
   const box = el("div", { className: "menu" });
   if (settings.attachments_enabled !== false) box.append(menuItem("attach", "Attach files", () => fileInput.click(), "only-mobile"));
   box.append(menuItem("poll", "Create a poll", openPollDialog));
+  if (window.sandesCalendar) {
+    const m = menuItem("bell", "Schedule an event", () => window.sandesCalendar.newEvent(activeId));
+    m.querySelector("svg").innerHTML = '<rect x="3.5" y="5" width="17" height="15.5" rx="2.5"/><path d="M3.5 10h17M8 3v4M16 3v4"/>';
+    box.append(m);
+  }
   if (window.sandesPanels) {
     box.append(menuItem("task", "Add a task", () => window.sandesPanels.openTasks(true)));
     box.append(menuItem("notes", "Open shared notes", () => window.sandesPanels.openNotes()));
@@ -1639,7 +1657,7 @@ function groupInfoView(g, d, rerender) {
           el("button", {
             type: "button", className: "linkbtn danger", textContent: "Remove",
             onclick: async () => {
-              if (!confirm(`Remove ${m.username} from ${g.name}?`)) return;
+              if (!(await sandesUI.confirm(`Remove ${m.username} from ${g.name}?`, { ok: "Remove", danger: true }))) return;
               try { await api("DELETE", `/api/groups/${g.id}/members/${m.id}`); rerender(); }
               catch (e) { toast(e.message, true); }
             },
@@ -1657,7 +1675,7 @@ function groupInfoView(g, d, rerender) {
     if (g.member) {
       foot.append(el("button", {
         type: "button", className: "pill-btn", onclick: async () => {
-          if (!confirm(`Leave ${g.name}?`)) return;
+          if (!(await sandesUI.confirm(`Leave ${g.name}?`, { ok: "Leave", danger: true, sub: g.is_public ? "You can join again from Browse." : "Someone will need to add you back." }))) return;
           try {
             await api("DELETE", `/api/groups/${g.id}/members/${me.id}`);
             d.close();
@@ -1668,7 +1686,7 @@ function groupInfoView(g, d, rerender) {
     if (g.can_manage) {
       foot.append(el("button", {
         type: "button", className: "pill-btn danger", onclick: async () => {
-          if (!confirm(`Delete ${g.name} for everyone? All its messages and files go too.`)) return;
+          if (!(await sandesUI.confirm(`Delete ${g.name} for everyone?`, { ok: "Delete group", danger: true, sub: "All its messages and files go too. This can't be undone." }))) return;
           try {
             await api("DELETE", `/api/groups/${g.id}`);
             d.close();
@@ -1826,7 +1844,7 @@ $("bellBtn").onclick = (e) => {
     el("label", { className: "chk" }, el("input", { type: "checkbox", checked: Notify.sound, onchange: (ev) => { Notify.sound = ev.target.checked; if (ev.target.checked) Notify.ding(); } }), "Play a sound"),
   );
   if (!Notify.canPopup()) {
-    box.append(el("p", { className: "fh" }, "Desktop pop-ups need Sandes opened over https (or on this computer as localhost). The sound and the unread count in the tab still work."));
+    box.append(el("p", { className: "fh" }, "Desktop pop-ups need Sandesh opened over https (or on this computer as localhost). The sound and the unread count in the tab still work."));
   } else if (Notification.permission === "default") {
     box.append(el("button", {
       type: "button", className: "pill-btn solid", textContent: "Allow desktop pop-ups",
@@ -1835,7 +1853,7 @@ $("bellBtn").onclick = (e) => {
   } else if (Notification.permission === "denied") {
     box.append(el("p", { className: "fh" }, "Pop-ups are blocked for this site. Allow them in the browser's site settings."));
   } else {
-    box.append(el("p", { className: "fh" }, "Desktop pop-ups are on while Sandes is in the background."));
+    box.append(el("p", { className: "fh" }, "Desktop pop-ups are on while Sandesh is in the background."));
   }
   showPop(e.currentTarget, box, { above: true });
 };
@@ -2164,6 +2182,7 @@ window.sandesChat = {
     return state.members || [];
   },
   canWrite: () => state.member !== false,
+  api,
   jumpTo,
   toast,
   ask,
@@ -2186,6 +2205,7 @@ window.addEventListener("DOMContentLoaded", async () => {
   renderMe();
   await Promise.all([loadDirectory(), loadConversations()]);
   applySettings(s);
+  window.sandesCalendar?.start();
   const main = conversations.find((c) => c.slug === "main") || conversations[0];
   if (main && matchMedia("(min-width: 761px)").matches) openConversation(main.id);
 });

@@ -1,4 +1,4 @@
-/* Sandes · Diwali crackers
+/* Sandesh · Diwali crackers
  *
  * Pick a cracker, set it down in the chat, then touch its fuse with the dhoop kathi
  * (the glowing incense stick that replaces your cursor). Everyone who has the same

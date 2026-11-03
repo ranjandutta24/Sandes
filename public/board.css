@@ -1,4 +1,4 @@
-/* Sandes · shared drawing board */
+/* Sandesh · shared drawing board */
 
 /* The board sits on top of the message feed (same grid cell); the composer stays usable. */
 .chat > .chat-head { grid-row: 1; grid-column: 1; }

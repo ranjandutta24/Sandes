@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Sign in · Sandes</title>
+    <title>Sign in · Sandesh</title>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
@@ -197,6 +197,19 @@
         .postmark { animation: none; }
         * { transition: none !important; }
       }
+    
+      /* the full form of the name, with the letters that spell it picked out */
+      .full {
+        margin: 10px 0 0;
+        max-width: 34ch;
+        font-family: var(--serif);
+        font-style: italic;
+        font-size: 0.9375rem;
+        line-height: 1.45;
+        color: var(--slate);
+      }
+      .full abbr { text-decoration: none; cursor: help; }
+      .full b { font-style: normal; font-weight: 700; color: var(--postal-red); }
     </style>
   </head>
   <body>
@@ -210,7 +223,7 @@
           <circle cx="60" cy="60" r="56" fill="none" stroke="currentColor" stroke-width="2" />
           <circle cx="60" cy="60" r="34" fill="none" stroke="currentColor" stroke-width="1.2" />
           <text font-family="Figtree, sans-serif" font-size="10.5" font-weight="600" letter-spacing="3" fill="currentColor">
-            <textPath href="#ring" startOffset="0">SANDES · BY AIR · SANDES · BY AIR ·</textPath>
+            <textPath href="#ring" startOffset="0" textLength="272" lengthAdjust="spacing">SANDESH · BY AIR · SANDESH · BY AIR ·</textPath>
           </text>
           <!-- dove -->
           <g transform="translate(60 64) scale(0.92)" fill="currentColor">
@@ -222,7 +235,8 @@
           </g>
         </svg>
 
-        <h1 class="wordmark"><span class="initial">S</span>andes</h1>
+        <h1 class="wordmark"><span class="initial">S</span>andesh</h1>
+        <p class="full"><abbr class="full-form" title="Secure And Networked Digital Exchange for Seamless Human Communication"><b>S</b>ecure <b>A</b>nd <b>N</b>etworked <b>D</b>igital <b>E</b>xchange for <b>S</b>eamless <b>H</b>uman Communication</abbr></p>
         <p class="lede">Sign in to read your messages.</p>
 
         <div class="error" id="error" role="alert">
@@ -241,7 +255,7 @@
           <button class="submit" type="submit">Sign in</button>
         </form>
 
-        <p class="footnote">Messages arrive for everyone in the room.</p>
+        <p class="footnote">Sandesh: a message, carried safely across your network.</p>
       </div>
     </main>
 

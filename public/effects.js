@@ -1,4 +1,4 @@
-/* Sandes · message effects (confetti, rangoli, hearts, marigold petals)
+/* Sandesh · message effects (confetti, rangoli, hearts, marigold petals)
  *
  * When someone sends a message "with an effect", everyone who has that chat open sees it
  * play over the chat. Drawn on one canvas above the chat pane; nothing is stored.

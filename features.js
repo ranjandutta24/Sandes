@@ -440,6 +440,183 @@ module.exports = function features(ctx) {
     });
 
     // ------------------------------------------------------------------
+    // Calendar
+    // ------------------------------------------------------------------
+    const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+    const TIME_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
+    const REPEATS = ["none", "daily", "weekly", "monthly", "yearly"];
+    const validDate = (v) => {
+        if (typeof v !== "string" || !DATE_RE.test(v)) return false;
+        const d = new Date(v + "T00:00:00Z");
+        return !Number.isNaN(d.getTime()) && d.toISOString().slice(0, 10) === v;
+    };
+    const fmtWhen = (e) => {
+        const d = new Date(e.event_date + "T00:00:00Z");
+        const day = d.toLocaleDateString("en-IN", { weekday: "short", day: "numeric", month: "short", timeZone: "UTC" });
+        if (!e.start_time) return `${day} (all day)`;
+        const [h, m] = e.start_time.split(":").map(Number);
+        const t = `${((h + 11) % 12) + 1}:${String(m).padStart(2, "0")} ${h < 12 ? "AM" : "PM"}`;
+        return `${day} · ${t}`;
+    };
+
+    const EVENT_SELECT = `
+        SELECT e.id, e.conversation_id, e.title, e.description, e.location,
+               to_char(e.event_date, 'YYYY-MM-DD') AS event_date,
+               to_char(e.end_date, 'YYYY-MM-DD') AS end_date,
+               to_char(e.start_time, 'HH24:MI') AS start_time,
+               to_char(e.end_time, 'HH24:MI') AS end_time,
+               e.repeat, e.color, e.remind_minutes, e.created_by, e.created_at,
+               cu.username AS created_by_name,
+               CASE WHEN c.type = 'direct' THEN other.username ELSE c.name END AS conversation_name,
+               c.type AS conversation_type,
+               (SELECT COALESCE(json_agg(json_build_object('user_id', r.user_id, 'status', r.status)), '[]')
+                FROM event_rsvps r WHERE r.event_id = e.id) AS rsvps
+        FROM events e
+        LEFT JOIN users cu ON cu.id = e.created_by
+        LEFT JOIN conversations c ON c.id = e.conversation_id
+        LEFT JOIN LATERAL (
+            SELECT ou.username FROM conversation_members cm JOIN users ou ON ou.id = cm.user_id
+            WHERE cm.conversation_id = c.id AND cm.user_id <> $1 LIMIT 1
+        ) other ON c.type = 'direct'`;
+    const VISIBLE = `(
+        (e.conversation_id IS NULL AND e.created_by = $1)
+        OR (e.conversation_id IS NOT NULL AND (c.slug = 'main' OR EXISTS (
+            SELECT 1 FROM conversation_members cm WHERE cm.conversation_id = c.id AND cm.user_id = $1)))
+    )`;
+
+    async function eventFor(userId, id) {
+        const { rows } = await pool.query(`${EVENT_SELECT} WHERE e.id = $2 AND ${VISIBLE}`, [userId, id]);
+        return rows[0] || null;
+    }
+
+    const eventsChanged = (ev, userId) => {
+        if (ev.conversation_id) io.to(`conv:${ev.conversation_id}`).emit("events:changed", { conversationId: ev.conversation_id });
+        else tellUsers([userId], "events:changed", { conversationId: null });
+    };
+
+    /** Check + clean an event from the browser. Returns { data } or { error } */
+    function cleanEvent(b) {
+        const title = str(b.title, 200);
+        if (!title) return { error: "Give the event a name" };
+        if (!validDate(b.event_date)) return { error: "Pick a date" };
+        const end_date = b.end_date ? (validDate(b.end_date) ? b.end_date : null) : null;
+        if (b.end_date && !end_date) return { error: "That end date isn't valid" };
+        if (end_date && end_date < b.event_date) return { error: "The event can't end before it starts" };
+        const start_time = b.start_time ? String(b.start_time).slice(0, 5) : null;
+        const end_time = b.end_time ? String(b.end_time).slice(0, 5) : null;
+        if (start_time && !TIME_RE.test(start_time)) return { error: "That start time isn't valid" };
+        if (end_time && (!TIME_RE.test(end_time) || !start_time)) return { error: "That end time isn't valid" };
+        if (start_time && end_time && !end_date && end_time < start_time) return { error: "The event can't end before it starts" };
+        const repeat = REPEATS.includes(b.repeat) ? b.repeat : "none";
+        const color = typeof b.color === "string" && /^#[0-9a-f]{6}$/i.test(b.color) ? b.color.toLowerCase() : "#2f5d8a";
+        const remind = b.remind_minutes === null || b.remind_minutes === undefined || b.remind_minutes === "" ? null : Number(b.remind_minutes);
+        if (remind !== null && (!Number.isInteger(remind) || remind < 0 || remind > 10080)) return { error: "That reminder isn't valid" };
+        return {
+            data: {
+                title, description: str(b.description, 4000) || null, location: str(b.location, 200) || null,
+                event_date: b.event_date, end_date: end_date === b.event_date ? null : end_date,
+                start_time, end_time, repeat, color, remind_minutes: remind,
+            },
+        };
+    }
+
+    async function canEditEvent(user, ev) {
+        if (ev.created_by === user.id || user.role === "admin") return true;
+        if (!ev.conversation_id) return false;
+        const g = await groupInfo(user.id, ev.conversation_id);
+        return !!(g && g.canManage);
+    }
+
+    // Events overlapping [from, to] (repeating events are returned once; the browser expands them)
+    app.get("/api/events", requireUser, async (req, res) => {
+        const from = validDate(req.query.from) ? req.query.from : null;
+        const to = validDate(req.query.to) ? req.query.to : null;
+        if (!from || !to || to < from) return res.status(400).json({ message: "Choose a date range" });
+        const { rows } = await pool.query(
+            `${EVENT_SELECT}
+             WHERE ${VISIBLE}
+               AND e.event_date <= $3
+               AND (e.repeat <> 'none' OR COALESCE(e.end_date, e.event_date) >= $2)
+             ORDER BY e.event_date, e.start_time NULLS FIRST, e.id
+             LIMIT 2000`,
+            [req.user.id, from, to],
+        );
+        res.json(rows);
+    });
+
+    app.post("/api/events", requireUser, async (req, res) => {
+        const clean = cleanEvent(req.body || {});
+        if (clean.error) return res.status(400).json({ message: clean.error });
+        const conversationId = req.body.conversation_id ? int(req.body.conversation_id) : null;
+        if (conversationId) {
+            const access = await postAccess(req.user.id, conversationId);
+            if (access.error) return res.status(403).json({ message: access.error });
+            const blocked = postBlocked(access.type, false);
+            if (blocked) return res.status(403).json({ message: blocked });
+        }
+        const d = clean.data;
+        const { rows } = await pool.query(
+            `INSERT INTO events (conversation_id, title, description, location, event_date, end_date,
+                                 start_time, end_time, repeat, color, remind_minutes, created_by)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) RETURNING id`,
+            [conversationId, d.title, d.description, d.location, d.event_date, d.end_date,
+             d.start_time, d.end_time, d.repeat, d.color, d.remind_minutes, req.user.id],
+        );
+        const ev = await eventFor(req.user.id, rows[0].id);
+        if (conversationId) {
+            await system(conversationId, actor(req), `📅 ${req.user.username} added “${d.title}” to the calendar · ${fmtWhen(ev)}${d.repeat !== "none" ? ` (repeats ${d.repeat})` : ""}`);
+        }
+        eventsChanged(ev, req.user.id);
+        res.status(201).json(ev);
+    });
+
+    app.patch("/api/events/:id", requireUser, async (req, res) => {
+        const ev = await eventFor(req.user.id, int(req.params.id));
+        if (!ev) return res.status(404).json({ message: "That event doesn't exist" });
+        if (!(await canEditEvent(req.user, ev))) return res.status(403).json({ message: "Only whoever added the event (or an owner) can change it" });
+        const clean = cleanEvent({ ...ev, ...req.body });
+        if (clean.error) return res.status(400).json({ message: clean.error });
+        const d = clean.data;
+        await pool.query(
+            `UPDATE events SET title = $2, description = $3, location = $4, event_date = $5, end_date = $6,
+                    start_time = $7, end_time = $8, repeat = $9, color = $10, remind_minutes = $11, updated_at = NOW()
+             WHERE id = $1`,
+            [ev.id, d.title, d.description, d.location, d.event_date, d.end_date, d.start_time, d.end_time, d.repeat, d.color, d.remind_minutes],
+        );
+        const next = await eventFor(req.user.id, ev.id);
+        eventsChanged(next, req.user.id);
+        res.json(next);
+    });
+
+    app.delete("/api/events/:id", requireUser, async (req, res) => {
+        const ev = await eventFor(req.user.id, int(req.params.id));
+        if (!ev) return res.status(404).json({ message: "That event doesn't exist" });
+        if (!(await canEditEvent(req.user, ev))) return res.status(403).json({ message: "Only whoever added the event (or an owner) can delete it" });
+        await pool.query("DELETE FROM events WHERE id = $1", [ev.id]);
+        eventsChanged(ev, req.user.id);
+        res.json({ ok: true });
+    });
+
+    // going / maybe / no (shared events only); "none" clears your answer
+    app.post("/api/events/:id/rsvp", requireUser, async (req, res) => {
+        const ev = await eventFor(req.user.id, int(req.params.id));
+        if (!ev || !ev.conversation_id) return res.status(404).json({ message: "That event doesn't exist" });
+        const status = req.body.status;
+        if (status === "none") {
+            await pool.query("DELETE FROM event_rsvps WHERE event_id = $1 AND user_id = $2", [ev.id, req.user.id]);
+        } else if (["yes", "maybe", "no"].includes(status)) {
+            await pool.query(
+                `INSERT INTO event_rsvps (event_id, user_id, status) VALUES ($1, $2, $3)
+                 ON CONFLICT (event_id, user_id) DO UPDATE SET status = EXCLUDED.status, updated_at = NOW()`,
+                [ev.id, req.user.id, status],
+            );
+        } else return res.status(400).json({ message: "Answer yes, maybe or no" });
+        const next = await eventFor(req.user.id, ev.id);
+        eventsChanged(next, req.user.id);
+        res.json(next);
+    });
+
+    // ------------------------------------------------------------------
     // Pins, reactions, polls, tasks: shared queries
     // ------------------------------------------------------------------
     async function pinList(conversationId) {
