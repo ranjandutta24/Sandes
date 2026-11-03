@@ -1589,7 +1589,7 @@
     crackerBtn.setAttribute("aria-expanded", "false");
   }
 
-  crackerBtn.addEventListener("click", () => (crackerBtn.disabled ? null : tray.hidden ? openTray() : closeTray()));
+  crackerBtn.addEventListener("click", () => (crackerBtn.disabled || off ? null : tray.hidden ? openTray() : closeTray()));
   document.addEventListener("pointerdown", (e) => {
     if (!tray.hidden && !tray.contains(e.target) && !crackerBtn.contains(e.target)) closeTray();
   });
@@ -1603,14 +1603,15 @@
    * Everyone else's crackers
    * ===================================================================== */
   let blocked = false; // board open in this chat
+  let off = false;     // turned off by the admin
 
   socket.on("cracker:place", (d) => {
-    if (blocked || !d || d.conversationId !== activeId || document.hidden || crackers.has(d.id) || !KINDS[d.kind]) return;
+    if (blocked || off || !d || d.conversationId !== activeId || document.hidden || crackers.has(d.id) || !KINDS[d.kind]) return;
     addCracker({ id: d.id, kind: d.kind, nx: d.x, ny: d.y, by: d.by });
   });
 
   socket.on("cracker:throw", (d) => {
-    if (blocked || !d || d.conversationId !== activeId || document.hidden || !KINDS[d.kind] || !KINDS[d.kind].thrown) return;
+    if (blocked || off || !d || d.conversationId !== activeId || document.hidden || !KINDS[d.kind] || !KINDS[d.kind].thrown) return;
     throwIt(d.kind, d.x, d.y);
   });
 
@@ -1627,7 +1628,7 @@
   socket.on("cracker:ignite", (d) => {
     const c = d && crackers.get(d.id);
     if (!c) return;
-    if (document.hidden || blocked) return removeCracker(c);
+    if (document.hidden || blocked || off) return removeCracker(c);
     ignite(c);
   });
 
@@ -1641,6 +1642,14 @@
   resize();
 
   window.sandesCrackers = {
+    // Admin setting: crackers on/off for everyone
+    setEnabled(on) {
+      on = !!on;
+      if (on === !off) return;
+      off = !on;
+      if (off) this.reset();
+      crackerBtn.hidden = off;
+    },
     // The shared board is open in this chat: no crackers until everyone closes it
     setBlocked(on) {
       on = !!on;
@@ -1665,4 +1674,5 @@
       ctx.clearRect(0, 0, W, H);
     },
   };
+  if (window.sandesSettings) window.sandesCrackers.setEnabled(window.sandesSettings.crackers_enabled);
 })();

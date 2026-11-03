@@ -231,7 +231,7 @@
 
         <form action="/login" method="POST">
           <div class="field">
-            <label for="username">Username</label>
+            <label for="username">Username or user ID</label>
             <input id="username" type="text" name="username" autocomplete="username" required autofocus />
           </div>
           <div class="field">
@@ -246,8 +246,11 @@
     </main>
 
     <script>
-      if (new URLSearchParams(location.search).has("error")) {
-        document.getElementById("error").classList.add("show");
+      const err = new URLSearchParams(location.search).get("error");
+      if (err) {
+        const box = document.getElementById("error");
+        if (err === "inactive") box.textContent = "Your account has been turned off. Ask an admin to turn it back on.";
+        box.classList.add("show");
       }
     </script>
   </body>

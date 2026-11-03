@@ -118,8 +118,74 @@ CREATE TABLE IF NOT EXISTS sandes.board_items (
 );
 
 -- ---------------------------------------------------------------
--- Default user (password stored as plain text, matching current login logic)
+-- Users: login ID, role, status, profile picture
+--   user_id  -> fixed login code (e.g. SND0001), never changes; log in with it or the username
+--   role     -> 'admin' (manages users + settings) or 'user'
+--   status   -> 'active' or 'inactive' (inactive users can't sign in)
+--   image    -> file name of the profile picture in ./uploads/avatars (NULL = initials)
+--   password -> "scrypt$<salt>$<hash>". Plain-text passwords from older installs (or typed
+--               in by hand with INSERT) still work and are hashed on the next sign-in.
 -- ---------------------------------------------------------------
-INSERT INTO sandes.users (username, password)
-SELECT 'admin', 'admin123'
-WHERE NOT EXISTS (SELECT 1 FROM sandes.users WHERE username = 'admin');
+ALTER TABLE sandes.users ADD COLUMN IF NOT EXISTS user_id VARCHAR(30);
+ALTER TABLE sandes.users ADD COLUMN IF NOT EXISTS role VARCHAR(10) NOT NULL DEFAULT 'user'
+    CHECK (role IN ('admin', 'user'));
+ALTER TABLE sandes.users ADD COLUMN IF NOT EXISTS status VARCHAR(10) NOT NULL DEFAULT 'active'
+    CHECK (status IN ('active', 'inactive'));
+ALTER TABLE sandes.users ADD COLUMN IF NOT EXISTS image VARCHAR(255);
+ALTER TABLE sandes.users ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+
+-- New users get SND + their number (SND0007) unless a user_id is given
+CREATE OR REPLACE FUNCTION sandes.users_default_user_id() RETURNS trigger AS $$
+DECLARE
+    candidate TEXT := 'SND' || lpad(NEW.id::text, 4, '0');
+    n INTEGER := 1;
+BEGIN
+    IF NEW.user_id IS NULL OR btrim(NEW.user_id) = '' THEN
+        WHILE EXISTS (SELECT 1 FROM sandes.users WHERE lower(user_id) = lower(candidate)) LOOP
+            candidate := 'SND' || lpad(NEW.id::text, 4, '0') || '-' || n;
+            n := n + 1;
+        END LOOP;
+        NEW.user_id := candidate;
+    END IF;
+    RETURN NEW;
+END
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS users_default_user_id ON sandes.users;
+CREATE TRIGGER users_default_user_id
+    BEFORE INSERT ON sandes.users
+    FOR EACH ROW EXECUTE FUNCTION sandes.users_default_user_id();
+
+UPDATE sandes.users SET user_id = 'SND' || lpad(id::text, 4, '0') WHERE user_id IS NULL;
+ALTER TABLE sandes.users ALTER COLUMN user_id SET NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS users_user_id_lower ON sandes.users (lower(user_id));
+
+-- Upgrading: the existing "admin" account becomes the first admin
+UPDATE sandes.users SET role = 'admin'
+WHERE username = 'admin'
+  AND NOT EXISTS (SELECT 1 FROM sandes.users WHERE role = 'admin');
+
+-- Fresh install (no admin at all): create admin / admin123. Change it after signing in.
+INSERT INTO sandes.users (username, password, role)
+SELECT 'admin', 'admin123', 'admin'
+WHERE NOT EXISTS (SELECT 1 FROM sandes.users WHERE role = 'admin')
+  AND NOT EXISTS (SELECT 1 FROM sandes.users WHERE username = 'admin');
+
+-- ---------------------------------------------------------------
+-- App settings, changed by admins (key -> JSON value)
+-- ---------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS sandes.settings (
+    key         VARCHAR(50)  PRIMARY KEY,
+    value       JSONB        NOT NULL,
+    updated_by  INTEGER      REFERENCES sandes.users (id) ON DELETE SET NULL,
+    updated_at  TIMESTAMPTZ  NOT NULL DEFAULT NOW()
+);
+
+INSERT INTO sandes.settings (key, value) VALUES
+    ('crackers_enabled',          'true'),  -- Diwali crackers in chats
+    ('board_enabled',             'true'),  -- shared drawing board
+    ('attachments_enabled',       'true'),  -- sending files
+    ('direct_messages_enabled',   'true'),  -- private 1-to-1 chats
+    ('users_can_change_username', 'true'),  -- users rename themselves
+    ('users_can_change_picture',  'true')   -- users set their own profile picture
+ON CONFLICT (key) DO NOTHING;

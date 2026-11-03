@@ -862,7 +862,7 @@
     headLive.textContent = viewers.length ? `${viewers.length} on it` : "";
     headBtn.classList.toggle("is-live", viewers.length > 0);
     headBtn.setAttribute("aria-pressed", String(conv != null));
-    headBtn.hidden = activeId == null;
+    headBtn.hidden = activeId == null || !enabled;
     if (conv != null) renderPeople(viewers);
     // crackers are off in this chat while anyone has the board open
     window.sandesCrackers?.setBlocked(conv != null || viewers.length > 0);
@@ -870,7 +870,7 @@
   }
 
   function open() {
-    if (activeId == null || conv != null) return;
+    if (activeId == null || conv != null || !enabled) return;
     conv = activeId;
     items = new Map();
     mine = [];
@@ -928,12 +928,19 @@
     });
   }
 
+  // The admin turned the board off while it was open
+  socket.on("board:closed", ({ conversationId }) => {
+    if (conversationId !== conv) return;
+    close();
+    showInfo("The admin turned the board off");
+  });
+
   socket.on("board:presence", ({ conversationId, viewers }) => {
     const before = presence[conversationId] || [];
     presence[conversationId] = viewers;
     if (conversationId !== activeId) return;
     const joinedNow = viewers.filter((n) => !before.includes(n) && n !== myName());
-    if (conv == null && joinedNow.length) {
+    if (conv == null && enabled && joinedNow.length) {
       inviteText.textContent = `${joinedNow[0]} opened the board`;
       invite.hidden = false;
     }
@@ -1003,7 +1010,22 @@
   setTool("pen");
   headBtn.hidden = true;
 
+  let enabled = true; // admin setting
+
+  // Short note in the chat pane (the board itself may be closed)
+  function showInfo(msg) {
+    inviteText.textContent = msg;
+    inviteOpen.hidden = true;
+    invite.hidden = false;
+    setTimeout(() => { invite.hidden = true; inviteOpen.hidden = false; }, 4000);
+  }
+
   window.sandesBoard = {
+    setEnabled(on) {
+      enabled = !!on;
+      if (!enabled) close();
+      syncHead();
+    },
     // index.html calls this whenever the open conversation changes (null = none)
     switchTo(id) {
       if (conv != null && conv !== id) close();
@@ -1011,4 +1033,5 @@
       refreshStatus(id);
     },
   };
+  if (window.sandesSettings) window.sandesBoard.setEnabled(window.sandesSettings.board_enabled);
 })();

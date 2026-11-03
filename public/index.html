@@ -154,6 +154,10 @@
         flex: none;
       }
 
+      .avatar { position: relative; overflow: hidden; }
+      .avatar img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+      .avatar.sm { width: 28px; height: 28px; font-size: 0.8125rem; }
+      .avatar.lg { width: 84px; height: 84px; font-size: 2rem; }
       .avatar.room { background: transparent; border: 1.5px solid var(--postal-red); color: var(--postal-red); }
       .avatar.room svg { width: 24px; height: 24px; }
 
@@ -206,6 +210,30 @@
 
       .logout:hover { border-color: var(--ink); }
 
+      .me-btn {
+        flex: 1; min-width: 0;
+        display: flex; align-items: center; gap: 10px;
+        margin: -6px 0 -6px -8px; padding: 6px 8px;
+        border: 0; border-radius: 12px;
+        background: transparent; text-align: left; cursor: pointer;
+      }
+
+      .me-btn:hover { background: #eef3f8; }
+      .me-text { min-width: 0; display: flex; flex-direction: column; }
+      .me-text strong { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+      .me-text small { font-size: 0.75rem; color: var(--slate); }
+
+      .icon-link {
+        flex: none; width: 34px; height: 34px;
+        display: grid; place-items: center;
+        border: 1.5px solid var(--rule); border-radius: 50%;
+        color: var(--ink);
+      }
+
+      .icon-link:hover { border-color: var(--ink); }
+      .icon-link svg { width: 18px; height: 18px; }
+      .icon-link[hidden], .attach[hidden], .new-chat[hidden], .cracker-btn[hidden], .pill-btn[hidden] { display: none; }
+
       /* ================= Chat pane ================= */
       .chat {
         position: relative;
@@ -251,6 +279,9 @@
 
       .msg { display: flex; flex-direction: column; align-items: flex-start; margin-top: 10px; }
       .msg.cont { margin-top: 2px; }
+      .msg { position: relative; }
+      .msg.has-av { padding-left: 36px; }
+      .msg .mav { position: absolute; left: 0; top: 0; }
       .msg .from { font-size: 0.75rem; font-weight: 600; margin: 0 0 3px 4px; }
       .msg.cont .from, .msg.mine .from, .chat.direct .msg .from { display: none; }
 
@@ -392,6 +423,7 @@
 
       .composer input[type="text"]::placeholder { color: #8f9bb0; }
       .composer input[type="text"]:focus { outline: none; border-color: var(--ink); }
+      .composer input[type="text"]:disabled { background: #eef3f8; }
 
       .send {
         display: inline-flex; align-items: center; gap: 8px;
@@ -472,6 +504,44 @@
 
       .person:hover { background: #eef3f8; }
 
+      /* ================= Profile ================= */
+      .pf { padding: 6px 22px 22px; }
+      .pf-top { display: flex; gap: 18px; align-items: center; padding-bottom: 18px; border-bottom: 1px solid #e1e8ef; }
+      .pf-name { font-size: 1.25rem; font-weight: 600; line-height: 1.3; overflow-wrap: anywhere; }
+      .pf-meta { margin-top: 2px; font-size: 0.8125rem; color: var(--slate); }
+      .pf-meta b { color: var(--ink); font-weight: 600; letter-spacing: 0.02em; }
+      .pf-pic { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+      .pf-sec { margin-top: 18px; display: flex; flex-direction: column; gap: 8px; }
+      .pf-sec h3 { margin: 0; font-size: 0.8125rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.08em; color: var(--slate); }
+      .pf-row { display: flex; gap: 8px; }
+      .pf input[type="text"], .pf input[type="password"] {
+        flex: 1; min-width: 0; width: 100%;
+        padding: 11px 16px;
+        border: 1.5px solid var(--rule); border-radius: 999px;
+        background: #fff; font: inherit; color: var(--ink);
+      }
+      .pf input:focus { outline: none; border-color: var(--ink); }
+      .pf input:disabled { background: #eef3f8; color: var(--slate); }
+      .pf-note, .pf-msg { margin: 0; font-size: 0.8125rem; color: var(--slate); line-height: 1.4; }
+      .pf-msg:empty, .pf-note:empty { display: none; }
+      .pf-msg.err { color: #8a2129; }
+      .pf-msg.ok { color: #2e6b5a; }
+
+      .pill-btn {
+        flex: none;
+        display: inline-flex; align-items: center; justify-content: center;
+        padding: 8px 16px;
+        border: 1.5px solid var(--rule); border-radius: 999px;
+        background: var(--paper);
+        font-size: 0.875rem; font-weight: 600; color: var(--ink);
+        cursor: pointer;
+      }
+      .pill-btn:hover { border-color: var(--ink); }
+      .pill-btn.solid { background: var(--ink); border-color: var(--ink); color: var(--paper); }
+      .pill-btn.solid:hover { background: #24375c; }
+      .pill-btn:disabled { opacity: 0.5; cursor: default; }
+      .pf-sec > .pill-btn { align-self: flex-start; }
+
       /* ================= Mobile ================= */
       @media (max-width: 760px) {
         .app { grid-template-columns: minmax(0, 1fr); }
@@ -528,7 +598,13 @@
         </nav>
 
         <div class="account">
-          <span>Signed in as <strong id="me">…</strong></span>
+          <button class="me-btn" id="meBtn" type="button" title="Your profile: picture, username, password">
+            <span id="meAvatar"></span>
+            <span class="me-text"><strong id="me">…</strong><small id="meSub">Your profile</small></span>
+          </button>
+          <a class="icon-link" id="adminLink" href="/admin" title="Admin: users and settings" aria-label="Admin: users and settings" hidden>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2.5 4 5.5v6c0 4.6 3.3 8.6 8 10 4.7-1.4 8-5.4 8-10v-6z" /><path d="m9 12 2 2 4-4" /></svg>
+          </a>
           <a class="logout" href="/logout">Log out</a>
         </div>
       </aside>
@@ -555,7 +631,7 @@
             <div class="status" id="status" role="status"></div>
             <div class="pending" id="pending" aria-label="Files to send"></div>
             <form class="composer" id="composer" autocomplete="off">
-              <label class="attach" title="Attach files">
+              <label class="attach" id="attachBtn" title="Attach files">
                 <span class="sr-only">Attach files</span>
                 <input type="file" id="fileInput" multiple hidden />
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48" /></svg>
@@ -588,6 +664,51 @@
         <input id="peopleSearch" type="search" placeholder="Search people" />
       </div>
       <div class="people" id="people"></div>
+    </dialog>
+
+    <!-- ============ Profile ============ -->
+    <dialog id="profileDlg" aria-labelledby="profileTitle">
+      <div class="dlg-head">
+        <h2 id="profileTitle">Your profile</h2>
+        <button class="x" type="button" id="closeProfile" aria-label="Close">×</button>
+      </div>
+      <div class="pf">
+        <div class="pf-top">
+          <div id="pfAvatar"></div>
+          <div>
+            <div class="pf-name" id="pfName"></div>
+            <div class="pf-meta">User ID <b id="pfUid"></b> · <span id="pfRole"></span></div>
+            <div class="pf-pic">
+              <label class="pill-btn" id="pfPick">
+                Change picture
+                <input type="file" id="pfFile" accept="image/png,image/jpeg,image/gif,image/webp" hidden />
+              </label>
+              <button class="pill-btn" id="pfRemove" type="button">Remove</button>
+            </div>
+            <p class="pf-msg" id="pfPicMsg" role="status"></p>
+          </div>
+        </div>
+
+        <form class="pf-sec" id="pfNameForm" autocomplete="off">
+          <h3><label for="pfUsername">Username</label></h3>
+          <div class="pf-row">
+            <input type="text" id="pfUsername" maxlength="40" />
+            <button class="pill-btn solid" id="pfNameSave" type="submit">Save</button>
+          </div>
+          <p class="pf-note" id="pfNameNote"></p>
+          <p class="pf-msg" id="pfNameMsg" role="status"></p>
+        </form>
+
+        <form class="pf-sec" id="pfPassForm">
+          <h3>Password</h3>
+          <input type="text" name="username" autocomplete="username" hidden id="pfPassUser" />
+          <input type="password" id="pfCur" placeholder="Current password" autocomplete="current-password" aria-label="Current password" required />
+          <input type="password" id="pfNew" placeholder="New password (at least 6 characters)" autocomplete="new-password" aria-label="New password" required minlength="6" />
+          <input type="password" id="pfNew2" placeholder="New password again" autocomplete="new-password" aria-label="New password again" required />
+          <button class="pill-btn solid" type="submit">Change password</button>
+          <p class="pf-msg" id="pfPassMsg" role="status"></p>
+        </form>
+      </div>
     </dialog>
 
     <script src="/socket.io/socket.io.js"></script>
@@ -626,11 +747,21 @@
         return s;
       };
 
+      // Initials on the person's colour, with their picture on top if they have one
+      const userAvatar = (name, image, cls = "") => {
+        const a = el("div", { className: ("avatar " + cls).trim() }, (name || "?")[0].toUpperCase());
+        a.style.background = inkFor(name);
+        if (image) {
+          const img = el("img", { src: image, alt: "" });
+          img.onerror = () => img.remove();
+          a.append(img);
+        }
+        return a;
+      };
+
       const avatarFor = (c) => {
         if (c.type === "room") return el("div", { className: "avatar room" }, svgUse("dove"));
-        const a = el("div", { className: "avatar" }, (c.name || "?")[0].toUpperCase());
-        a.style.background = inkFor(c.name);
-        return a;
+        return userAvatar(c.name, c.image);
       };
 
       const shortTime = (iso) => {
@@ -651,6 +782,7 @@
 
       // ---------------- state ----------------
       let me = null;
+      let settings = {};
       let conversations = [];
       let activeId = null;
       const unread = {};
@@ -731,6 +863,17 @@
 
         const from = el("div", { className: "from" }, sender);
         from.style.color = inkFor(sender);
+        if (m.sender_id) from.dataset.uid = m.sender_id;
+        // in rooms, other people's messages get their picture next to the first bubble
+        const room = conversations.find((x) => x.id === m.conversation_id)?.type === "room";
+        if (room && !mine) {
+          row.classList.add("has-av");
+          if (sender !== lastSender) {
+            const av = userAvatar(sender, m.sender_image, "sm mav");
+            if (m.sender_id) av.dataset.uid = m.sender_id;
+            row.append(av);
+          }
+        }
 
         const bubble = el("div", { className: "bubble" });
         if (m.attachments && m.attachments.length) {
@@ -769,6 +912,7 @@
         $("chatSub").textContent = c.type === "room" ? "Everyone can read messages here" : "Private chat";
         $("chatAvatar").replaceChildren(avatarFor(c));
         renderSidebar();
+        syncComposer();
 
         list.replaceChildren();
         lastSender = lastDay = null;
@@ -820,14 +964,186 @@
         renderSidebar();
       });
 
-      socket.on("connect", () => { statusEl.textContent = ""; sendBtn.disabled = false; });
-      socket.on("disconnect", () => { statusEl.textContent = "Connection lost. Reconnecting…"; sendBtn.disabled = true; });
-      socket.on("connect_error", () => { statusEl.textContent = "Can't reach the server. Retrying…"; });
+      socket.on("connect", () => { statusEl.textContent = ""; syncComposer(); });
+      socket.on("disconnect", () => { statusEl.textContent = "Connection lost. Reconnecting…"; syncComposer(); });
+      socket.on("connect_error", (err) => {
+        if (err && err.message === "Account turned off") return (location.href = "/login?error=inactive");
+        statusEl.textContent = "Can't reach the server. Retrying…";
+      });
+
+      // ---------------- account + settings ----------------
+      socket.on("settings", applySettings);
+      socket.on("account:disabled", () => (location.href = "/login?error=inactive"));
+      socket.on("profile", (p) => { me = { ...me, ...p }; renderMe(); syncProfile(); });
+      socket.on("user:updated", async (u) => {
+        if (me && u.id === me.id) { me.username = u.username; me.image = u.image; renderMe(); }
+        document.querySelectorAll(`.from[data-uid="${u.id}"]`).forEach((n) => (n.textContent = u.username));
+        document.querySelectorAll(`.mav[data-uid="${u.id}"]`).forEach((n) => {
+          const av = userAvatar(u.username, u.image, "sm mav");
+          av.dataset.uid = u.id;
+          n.replaceWith(av);
+        });
+        await loadConversations();
+        const c = conversations.find((x) => x.id === activeId);
+        if (c && c.type === "direct" && c.other_user_id === u.id) {
+          $("chatTitle").textContent = c.name;
+          $("chatAvatar").replaceChildren(avatarFor(c));
+        }
+      });
+
+      function applySettings(s) {
+        settings = window.sandesSettings = s;
+        window.sandesCrackers?.setEnabled(s.crackers_enabled);
+        window.sandesBoard?.setEnabled(s.board_enabled);
+        $("attachBtn").hidden = !s.attachments_enabled;
+        if (!s.attachments_enabled && pendingFiles.length) { pendingFiles = []; renderPending(); }
+        $("newChat").hidden = !s.direct_messages_enabled;
+        syncComposer();
+        syncProfile();
+      }
+
+      // Direct chats are read-only while the admin has direct messages turned off
+      function syncComposer() {
+        const c = conversations.find((x) => x.id === activeId);
+        const off = !!c && c.type === "direct" && settings.direct_messages_enabled === false;
+        input.disabled = off;
+        input.placeholder = off ? "Direct messages are turned off by the admin" : "Write a message";
+        sendBtn.disabled = off || !socket.connected;
+      }
+
+      function renderMe() {
+        if (!me) return;
+        $("me").textContent = me.username;
+        $("meAvatar").replaceChildren(userAvatar(me.username, me.image, "sm"));
+        $("meSub").textContent = me.role === "admin" ? "Admin · your profile" : "Your profile";
+        $("adminLink").hidden = me.role !== "admin";
+      }
+
+      async function api(method, url, body) {
+        const opts = { method, headers: {} };
+        if (body instanceof FormData) opts.body = body;
+        else if (body) { opts.headers["Content-Type"] = "application/json"; opts.body = JSON.stringify(body); }
+        const r = await fetch(url, opts);
+        let data = {};
+        try { data = await r.json(); } catch {}
+        if (!r.ok) throw new Error(data.message || "Something went wrong. Try again.");
+        return data;
+      }
+
+      // Crop to the middle square and shrink to 256px, so pictures are small and look the same everywhere
+      async function squarePicture(file, size = 256) {
+        const url = URL.createObjectURL(file);
+        try {
+          const img = await new Promise((resolve, reject) => {
+            const i = new Image();
+            i.onload = () => resolve(i);
+            i.onerror = () => reject(new Error("That file isn't a picture this browser can read"));
+            i.src = url;
+          });
+          const s = Math.min(img.naturalWidth, img.naturalHeight);
+          const c = document.createElement("canvas");
+          c.width = c.height = size;
+          c.getContext("2d").drawImage(img, (img.naturalWidth - s) / 2, (img.naturalHeight - s) / 2, s, s, 0, 0, size, size);
+          return await new Promise((resolve) => c.toBlob(resolve, "image/webp", 0.9));
+        } finally {
+          URL.revokeObjectURL(url);
+        }
+      }
+
+      // ---------------- profile dialog ----------------
+      const pdlg = $("profileDlg");
+      const say = (id, text, kind = "") => { const n = $(id); n.textContent = text; n.className = "pf-msg " + kind; };
+
+      function syncProfile() {
+        if (!me) return;
+        const admin = me.role === "admin";
+        const canName = admin || settings.users_can_change_username !== false;
+        const canPic = admin || settings.users_can_change_picture !== false;
+        $("pfAvatar").replaceChildren(userAvatar(me.username, me.image, "lg"));
+        $("pfName").textContent = me.username;
+        $("pfUid").textContent = me.user_id || "";
+        $("pfRole").textContent = admin ? "Admin" : "Member";
+        $("pfPassUser").value = me.username;
+        $("pfUsername").disabled = $("pfNameSave").disabled = !canName;
+        $("pfNameNote").textContent = canName
+          ? "You can sign in with your username or your user ID."
+          : "Changing usernames is turned off by the admin.";
+        $("pfPick").hidden = !canPic;
+        $("pfRemove").hidden = !canPic || !me.image;
+        if (!canPic) say("pfPicMsg", "Changing pictures is turned off by the admin.");
+        else if ($("pfPicMsg").textContent.includes("turned off")) say("pfPicMsg", "");
+      }
+
+      $("meBtn").onclick = () => {
+        ["pfPicMsg", "pfNameMsg", "pfPassMsg"].forEach((id) => say(id, ""));
+        $("pfPassForm").reset();
+        $("pfUsername").value = me.username;
+        syncProfile();
+        pdlg.showModal();
+      };
+      $("closeProfile").onclick = () => pdlg.close();
+      pdlg.addEventListener("click", (e) => { if (e.target === pdlg) pdlg.close(); });
+
+      $("pfFile").onchange = async () => {
+        const file = $("pfFile").files[0];
+        $("pfFile").value = "";
+        if (!file) return;
+        say("pfPicMsg", "Uploading…");
+        try {
+          const blob = await squarePicture(file);
+          const fd = new FormData();
+          fd.append("image", blob, blob.type === "image/webp" ? "avatar.webp" : "avatar.png");
+          me = { ...me, ...(await api("POST", "/api/profile/image", fd)) };
+          renderMe();
+          syncProfile();
+          say("pfPicMsg", "Picture updated", "ok");
+        } catch (err) {
+          say("pfPicMsg", err.message, "err");
+        }
+      };
+
+      $("pfRemove").onclick = async () => {
+        try {
+          me = { ...me, ...(await api("DELETE", "/api/profile/image")) };
+          renderMe();
+          syncProfile();
+          say("pfPicMsg", "Picture removed", "ok");
+        } catch (err) {
+          say("pfPicMsg", err.message, "err");
+        }
+      };
+
+      $("pfNameForm").addEventListener("submit", async (e) => {
+        e.preventDefault();
+        const username = $("pfUsername").value.trim();
+        if (username === me.username) return say("pfNameMsg", "That's already your username");
+        try {
+          me = { ...me, ...(await api("PUT", "/api/profile/username", { username })) };
+          renderMe();
+          syncProfile();
+          say("pfNameMsg", "Username changed. Use it the next time you sign in.", "ok");
+        } catch (err) {
+          say("pfNameMsg", err.message, "err");
+        }
+      });
+
+      $("pfPassForm").addEventListener("submit", async (e) => {
+        e.preventDefault();
+        if ($("pfNew").value !== $("pfNew2").value) return say("pfPassMsg", "The two new passwords don't match", "err");
+        try {
+          await api("PUT", "/api/profile/password", { current: $("pfCur").value, password: $("pfNew").value });
+          $("pfPassForm").reset();
+          say("pfPassMsg", "Password changed", "ok");
+        } catch (err) {
+          say("pfPassMsg", err.message, "err");
+        }
+      });
       socket.on("error", (e) => { statusEl.textContent = typeof e === "string" ? e : "Message not sent. Try again."; });
 
       // ---------------- attachments ----------------
       function addFiles(files) {
         statusEl.textContent = "";
+        if (settings.attachments_enabled === false) { statusEl.textContent = "Sending files is turned off by the admin."; return; }
         for (const f of files) {
           if (pendingFiles.length >= MAX_FILES) { statusEl.textContent = `You can attach up to ${MAX_FILES} files at once.`; break; }
           pendingFiles.push(f);
@@ -919,7 +1235,7 @@
           ...(shown.length
             ? shown.map((p) =>
                 el("button", { className: "person", type: "button", onclick: () => startDirect(p.id) },
-                  avatarFor({ type: "direct", name: p.username }), p.username))
+                  userAvatar(p.username, p.image), p.username))
             : [el("p", { className: "hint" }, people.length ? "No one matches that name." : "No other users yet. Add users to the users table to chat with them.")]),
         );
       }
@@ -952,9 +1268,11 @@
       (async () => {
         const r = await fetch("/me");
         if (!r.ok) return (location.href = "/login");
-        me = await r.json();
-        $("me").textContent = me.username;
+        const { settings: s, ...profile } = await r.json();
+        me = profile;
+        renderMe();
         await loadConversations();
+        applySettings(s);
         const main = conversations.find((c) => c.slug === "main") || conversations[0];
         if (main && matchMedia("(min-width: 761px)").matches) openConversation(main.id);
       })();

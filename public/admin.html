@@ -1,0 +1,828 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Admin · Sandes</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Bodoni+Moda:ital,opsz,wght@0,6..96,400..900;1,6..96,400..900&family=Figtree:wght@400;500;600&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      :root {
+        --aerogramme: #e3ebf2;
+        --paper: #fbfcfd;
+        --ink: #1b2a47;
+        --postal-red: #b3303a;
+        --slate: #66758c;
+        --rule: #c9d5e1;
+        --line: #e1e8ef;
+        --green: #2e6b5a;
+        --serif: "Bodoni Moda", "Didot", "Bodoni 72", Georgia, serif;
+        --sans: "Figtree", system-ui, -apple-system, "Segoe UI", sans-serif;
+        --airmail: repeating-linear-gradient(-45deg, var(--postal-red) 0 14px, var(--paper) 14px 20px, var(--ink) 20px 34px, var(--paper) 34px 40px);
+      }
+
+      * { box-sizing: border-box; }
+
+      body {
+        margin: 0;
+        min-height: 100dvh;
+        font-family: var(--sans);
+        color: var(--ink);
+        background-color: var(--aerogramme);
+        background-image: repeating-linear-gradient(0deg, rgba(27, 42, 71, 0.025) 0 1px, transparent 1px 6px);
+        -webkit-font-smoothing: antialiased;
+      }
+
+      button, input, select { font: inherit; color: inherit; }
+      :focus-visible { outline: 2px solid var(--postal-red); outline-offset: 2px; }
+      [hidden] { display: none !important; }
+
+      /* ---------- top bar ---------- */
+      .top {
+        position: relative;
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding: 16px 28px 22px;
+        background: var(--paper);
+      }
+
+      .top::after {
+        content: "";
+        position: absolute; left: 0; right: 0; bottom: 0;
+        height: 6px;
+        background: var(--airmail);
+      }
+
+      .mark { width: 34px; height: 34px; color: var(--postal-red); flex: none; }
+      .wordmark { margin: 0; font-family: var(--serif); font-weight: 500; font-size: 1.75rem; line-height: 1; letter-spacing: -0.02em; }
+      .wordmark i { font-weight: 400; }
+      .wordmark .sub { margin-left: 8px; font-style: italic; font-size: 1.25rem; color: var(--postal-red); }
+
+      .top .spacer { flex: 1; }
+
+      .pill {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        padding: 8px 16px;
+        border: 1.5px solid var(--rule);
+        border-radius: 999px;
+        background: var(--paper);
+        color: var(--ink);
+        font-size: 0.875rem;
+        font-weight: 600;
+        text-decoration: none;
+        cursor: pointer;
+        white-space: nowrap;
+      }
+
+      .pill:hover { border-color: var(--ink); }
+      .pill.solid { background: var(--ink); border-color: var(--ink); color: var(--paper); }
+      .pill.solid:hover { background: #24375c; }
+      .pill.danger { color: #8a2129; }
+      .pill svg { width: 16px; height: 16px; }
+      .pill:disabled { opacity: 0.5; cursor: default; }
+
+      /* ---------- page ---------- */
+      main { max-width: 1100px; margin: 0 auto; padding: 30px 28px 60px; }
+
+      h1 { margin: 0; font-family: var(--serif); font-weight: 500; font-size: 2.25rem; letter-spacing: -0.01em; }
+      .lede { margin: 6px 0 22px; color: var(--slate); }
+
+      .tabs { display: flex; gap: 4px; margin-bottom: 18px; border-bottom: 1px solid var(--rule); }
+
+      .tab {
+        position: relative;
+        padding: 10px 16px 12px;
+        border: 0;
+        background: transparent;
+        font-weight: 600;
+        color: var(--slate);
+        cursor: pointer;
+      }
+
+      .tab[aria-selected="true"] { color: var(--ink); }
+      .tab[aria-selected="true"]::after {
+        content: "";
+        position: absolute; left: 10px; right: 10px; bottom: -1px;
+        height: 3px; border-radius: 3px 3px 0 0;
+        background: var(--postal-red);
+      }
+
+      .tab .count {
+        margin-left: 6px;
+        padding: 1px 7px;
+        border-radius: 999px;
+        background: #d6e0ea;
+        font-size: 0.75rem;
+      }
+
+      .card {
+        background: var(--paper);
+        border-radius: 16px;
+        box-shadow: 0 1px 0 rgba(27, 42, 71, 0.06), 0 0 0 1px #d6e0ea;
+      }
+
+      /* ---------- users ---------- */
+      .toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-bottom: 14px; }
+
+      .search {
+        flex: 1;
+        min-width: 200px;
+        padding: 10px 16px;
+        border: 1.5px solid var(--rule);
+        border-radius: 999px;
+        background: var(--paper);
+      }
+
+      .search:focus { outline: none; border-color: var(--ink); }
+
+      .seg { display: inline-flex; padding: 3px; border-radius: 999px; background: #d6e0ea; }
+
+      .seg button {
+        padding: 6px 14px;
+        border: 0;
+        border-radius: 999px;
+        background: transparent;
+        font-size: 0.8125rem;
+        font-weight: 600;
+        color: var(--slate);
+        cursor: pointer;
+      }
+
+      .seg button[aria-pressed="true"] { background: var(--paper); color: var(--ink); box-shadow: 0 1px 2px rgba(27, 42, 71, 0.15); }
+
+      table { width: 100%; border-collapse: collapse; }
+
+      th {
+        padding: 12px 16px;
+        text-align: left;
+        font-size: 0.75rem;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        color: var(--slate);
+        border-bottom: 1px solid var(--line);
+      }
+
+      td { padding: 12px 16px; border-bottom: 1px solid var(--line); vertical-align: middle; font-size: 0.9375rem; }
+      tr:last-child td { border-bottom: 0; }
+      tr.off td { color: var(--slate); }
+      tr.off .avatar { filter: grayscale(1); opacity: 0.6; }
+
+      .who { display: flex; align-items: center; gap: 12px; min-width: 0; }
+      .who .nm { font-weight: 600; overflow-wrap: anywhere; }
+      .you { margin-left: 6px; font-size: 0.75rem; font-weight: 600; color: var(--slate); }
+
+      .uid { font-variant-numeric: tabular-nums; letter-spacing: 0.02em; }
+
+      .avatar {
+        position: relative;
+        width: 38px; height: 38px;
+        flex: none;
+        display: grid; place-items: center;
+        overflow: hidden;
+        border-radius: 50%;
+        color: #fff;
+        font-family: var(--serif);
+        font-weight: 600;
+        font-size: 1.0625rem;
+      }
+
+      .avatar img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+      .avatar.lg { width: 72px; height: 72px; font-size: 1.75rem; }
+      .avatar.sm { width: 28px; height: 28px; font-size: 0.8125rem; }
+
+      .role {
+        display: inline-block;
+        padding: 2px 10px;
+        border-radius: 999px;
+        font-size: 0.75rem;
+        font-weight: 600;
+        background: #e3ebf2;
+      }
+
+      .role.admin { background: var(--ink); color: var(--paper); }
+
+      .num { font-variant-numeric: tabular-nums; color: var(--slate); }
+      .acts { display: flex; gap: 6px; justify-content: flex-end; }
+      .acts .pill { padding: 6px 12px; font-size: 0.8125rem; }
+
+      /* switch */
+      .switch { display: inline-flex; align-items: center; gap: 10px; cursor: pointer; font-size: 0.875rem; font-weight: 600; }
+      .switch input { position: absolute; opacity: 0; width: 1px; height: 1px; }
+
+      .switch .track {
+        position: relative;
+        width: 40px; height: 24px;
+        flex: none;
+        border-radius: 999px;
+        background: #c3cedb;
+        transition: background-color 160ms ease;
+      }
+
+      .switch .track::after {
+        content: "";
+        position: absolute; left: 3px; top: 3px;
+        width: 18px; height: 18px;
+        border-radius: 50%;
+        background: #fff;
+        box-shadow: 0 1px 2px rgba(27, 42, 71, 0.3);
+        transition: transform 160ms ease;
+      }
+
+      .switch input:checked + .track { background: var(--green); }
+      .switch input:checked + .track::after { transform: translateX(16px); }
+      .switch input:focus-visible + .track { outline: 2px solid var(--postal-red); outline-offset: 2px; }
+      .switch input:disabled + .track { opacity: 0.5; }
+      .switch:has(input:disabled) { cursor: default; }
+
+      .empty-row td { padding: 40px; text-align: center; color: var(--slate); font-family: var(--serif); font-style: italic; font-size: 1.125rem; }
+
+      /* ---------- settings ---------- */
+      .group + .group { margin-top: 18px; }
+
+      .group h2 {
+        margin: 0 0 8px 4px;
+        font-family: var(--serif);
+        font-style: italic;
+        font-weight: 400;
+        font-size: 1.125rem;
+        color: var(--slate);
+      }
+
+      .set { display: flex; align-items: center; gap: 18px; padding: 16px 20px; border-bottom: 1px solid var(--line); }
+      .set:last-child { border-bottom: 0; }
+      .set .txt { flex: 1; min-width: 0; }
+      .set .t { font-weight: 600; }
+      .set .d { margin-top: 2px; font-size: 0.875rem; color: var(--slate); line-height: 1.45; }
+      .set .saved { font-size: 0.75rem; font-weight: 600; color: var(--green); opacity: 0; transition: opacity 200ms; }
+      .set .saved.show { opacity: 1; }
+
+      /* ---------- dialogs ---------- */
+      dialog {
+        width: min(440px, calc(100vw - 32px));
+        padding: 0;
+        border: 0;
+        border-radius: 16px;
+        background: var(--paper);
+        color: var(--ink);
+        box-shadow: 0 30px 80px -20px rgba(27, 42, 71, 0.5);
+      }
+
+      dialog::backdrop { background: rgba(27, 42, 71, 0.35); }
+
+      .dlg-head { display: flex; align-items: center; justify-content: space-between; padding: 20px 22px 6px; }
+      .dlg-head h2 { margin: 0; font-family: var(--serif); font-weight: 500; font-size: 1.5rem; }
+      .x { width: 34px; height: 34px; border: 0; border-radius: 50%; background: #eef3f8; cursor: pointer; font-size: 18px; }
+
+      .form { display: flex; flex-direction: column; gap: 14px; padding: 12px 22px 22px; }
+      .field label { display: block; margin-bottom: 6px; font-size: 0.8125rem; font-weight: 600; }
+      .field .hint { margin-top: 5px; font-size: 0.8125rem; color: var(--slate); }
+
+      .field input, .field select {
+        width: 100%;
+        padding: 11px 16px;
+        border: 1.5px solid var(--rule);
+        border-radius: 12px;
+        background: #fff;
+      }
+
+      .field input:focus, .field select:focus { outline: none; border-color: var(--ink); }
+      .field input:disabled { background: #eef3f8; color: var(--slate); }
+
+      .pic { display: flex; align-items: center; gap: 14px; }
+      .pic .btns { display: flex; flex-wrap: wrap; gap: 8px; }
+
+      .err { margin: 0; padding: 10px 14px; border-left: 3px solid var(--postal-red); background: #f8ecec; color: #8a2129; font-size: 0.875rem; }
+      .err:empty { display: none; }
+
+      .dlg-foot { display: flex; justify-content: flex-end; gap: 8px; margin-top: 4px; }
+
+      .toast {
+        position: fixed;
+        left: 50%; bottom: 24px;
+        transform: translateX(-50%);
+        max-width: calc(100vw - 32px);
+        padding: 10px 18px;
+        border-radius: 999px;
+        background: var(--ink);
+        color: var(--paper);
+        font-size: 0.875rem;
+        box-shadow: 0 12px 30px -12px rgba(27, 42, 71, 0.6);
+        z-index: 20;
+      }
+
+      .toast.bad { background: #8a2129; }
+
+      /* ---------- small screens: rows become cards ---------- */
+      @media (max-width: 760px) {
+        .top { padding: 12px 14px 18px; }
+        .top .who-me .nm { display: none; }
+        main { padding: 22px 14px 48px; }
+        h1 { font-size: 1.875rem; }
+        thead { display: none; }
+        table, tbody, tr, td { display: block; }
+        tr { display: grid; grid-template-columns: 1fr auto; gap: 8px 12px; padding: 14px 16px; border-bottom: 1px solid var(--line); }
+        tr:last-child { border-bottom: 0; }
+        td { padding: 0; border: 0; }
+        td.c-who { grid-column: 1 / -1; }
+        td.c-uid::before { content: "ID "; color: var(--slate); font-size: 0.8125rem; }
+        td.c-msgs, td.c-joined { display: none; }
+        td.c-acts { grid-column: 1 / -1; }
+        .acts { justify-content: flex-start; }
+      }
+    </style>
+  </head>
+  <body>
+    <header class="top">
+      <svg class="mark" viewBox="-28 -26 56 42" fill="currentColor" aria-hidden="true">
+        <path opacity=".55" d="M2 3 C6 -7 14 -14 27 -17 C21 -8 15 -1 10 5 Z" />
+        <path d="M-23 5 C-20 1 -15 0 -11 2 C-5 5 3 6 10 3 L25 -3 L21 6 C14 11 2 14 -8 12 C-14 11 -19 9 -23 5 Z" />
+        <path d="M-6 4 C-5 -8 2 -18 15 -23 C11 -13 9 -5 6 5 Z" />
+        <path d="M-23 5 L-27 6.5 L-22.5 7 Z" />
+      </svg>
+      <p class="wordmark"><i>S</i>andes<span class="sub">admin</span></p>
+      <span class="spacer"></span>
+      <a class="pill" href="/">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m15 18-6-6 6-6" /></svg>
+        Back to chat
+      </a>
+    </header>
+
+    <main>
+      <h1>Admin</h1>
+      <p class="lede">Manage who can sign in, and switch features on or off for everyone.</p>
+
+      <div class="tabs" role="tablist">
+        <button class="tab" role="tab" id="tabUsers" aria-selected="true" aria-controls="panelUsers">Users<span class="count" id="userCount">0</span></button>
+        <button class="tab" role="tab" id="tabSettings" aria-selected="false" aria-controls="panelSettings">Settings</button>
+      </div>
+
+      <!-- ============ Users ============ -->
+      <section id="panelUsers" role="tabpanel" aria-labelledby="tabUsers">
+        <div class="toolbar">
+          <input class="search" id="search" type="search" placeholder="Search by name or user ID" aria-label="Search users" />
+          <div class="seg" role="group" aria-label="Show">
+            <button type="button" data-filter="all" aria-pressed="true">All</button>
+            <button type="button" data-filter="active" aria-pressed="false">Active</button>
+            <button type="button" data-filter="inactive" aria-pressed="false">Inactive</button>
+          </div>
+          <button class="pill solid" id="newUser" type="button">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14" /></svg>
+            New user
+          </button>
+        </div>
+
+        <div class="card">
+          <table>
+            <thead>
+              <tr>
+                <th>Person</th>
+                <th>User ID</th>
+                <th>Role</th>
+                <th>Status</th>
+                <th>Messages</th>
+                <th>Joined</th>
+                <th><span class="sr-only" hidden>Actions</span></th>
+              </tr>
+            </thead>
+            <tbody id="rows"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- ============ Settings ============ -->
+      <section id="panelSettings" role="tabpanel" aria-labelledby="tabSettings" hidden>
+        <div id="settingGroups"></div>
+      </section>
+    </main>
+
+    <!-- ============ Create / edit user ============ -->
+    <dialog id="userDlg" aria-labelledby="userDlgTitle">
+      <div class="dlg-head">
+        <h2 id="userDlgTitle">New user</h2>
+        <button class="x" type="button" data-close aria-label="Close">×</button>
+      </div>
+      <form class="form" id="userForm" autocomplete="off">
+        <div class="pic" id="picRow">
+          <div id="picAvatar"></div>
+          <div class="btns">
+            <label class="pill">Upload picture<input type="file" id="picFile" accept="image/png,image/jpeg,image/gif,image/webp" hidden /></label>
+            <button class="pill danger" type="button" id="picRemove">Remove</button>
+          </div>
+        </div>
+        <div class="field">
+          <label for="fUsername">Username</label>
+          <input id="fUsername" maxlength="40" required />
+          <div class="hint">Letters, numbers, dots, dashes or underscores. No spaces.</div>
+        </div>
+        <div class="field">
+          <label for="fUserId">User ID</label>
+          <input id="fUserId" maxlength="30" placeholder="Leave empty to make one (SND0007)" />
+          <div class="hint" id="fUserIdHint">Fixed login code. It can't be changed later.</div>
+        </div>
+        <div class="field" id="fPassField">
+          <label for="fPassword">Password</label>
+          <input id="fPassword" type="password" minlength="6" autocomplete="new-password" />
+          <div class="hint">At least 6 characters. They can change it from their profile.</div>
+        </div>
+        <div class="field">
+          <label for="fRole">Role</label>
+          <select id="fRole">
+            <option value="user">Member: chats and edits their own profile</option>
+            <option value="admin">Admin: also manages users and settings</option>
+          </select>
+        </div>
+        <p class="err" id="userErr" role="alert"></p>
+        <div class="dlg-foot">
+          <button class="pill" type="button" data-close>Cancel</button>
+          <button class="pill solid" type="submit" id="userSave">Create user</button>
+        </div>
+      </form>
+    </dialog>
+
+    <!-- ============ Reset password ============ -->
+    <dialog id="passDlg" aria-labelledby="passDlgTitle">
+      <div class="dlg-head">
+        <h2 id="passDlgTitle">New password</h2>
+        <button class="x" type="button" data-close aria-label="Close">×</button>
+      </div>
+      <form class="form" id="passForm">
+        <p class="lede" id="passFor" style="margin: 0"></p>
+        <div class="field">
+          <label for="pNew">New password</label>
+          <input id="pNew" type="password" minlength="6" required autocomplete="new-password" />
+        </div>
+        <div class="field">
+          <label for="pNew2">Type it again</label>
+          <input id="pNew2" type="password" required autocomplete="new-password" />
+        </div>
+        <p class="err" id="passErr" role="alert"></p>
+        <div class="dlg-foot">
+          <button class="pill" type="button" data-close>Cancel</button>
+          <button class="pill solid" type="submit">Set password</button>
+        </div>
+      </form>
+    </dialog>
+
+    <div class="toast" id="toast" role="status" hidden></div>
+
+    <script>
+      const $ = (id) => document.getElementById(id);
+      const el = (tag, props = {}, ...kids) => {
+        const n = Object.assign(document.createElement(tag), props);
+        kids.flat().forEach((k) => k != null && n.append(k));
+        return n;
+      };
+
+      const inks = ["#2f5d8a", "#7a3e6c", "#2e6b5a", "#8a5a1f", "#4b4f9c", "#9a3b3b", "#3d6e7e", "#6b5b2e"];
+      const inkFor = (name = "") => {
+        let h = 0;
+        for (const c of name) h = (h * 31 + c.charCodeAt(0)) >>> 0;
+        return inks[h % inks.length];
+      };
+
+      const userAvatar = (name, image, cls = "") => {
+        const a = el("div", { className: ("avatar " + cls).trim() }, (name || "?")[0].toUpperCase());
+        a.style.background = inkFor(name);
+        if (image) {
+          const img = el("img", { src: image, alt: "" });
+          img.onerror = () => img.remove();
+          a.append(img);
+        }
+        return a;
+      };
+
+      async function api(method, url, body) {
+        const opts = { method, headers: {} };
+        if (body instanceof FormData) opts.body = body;
+        else if (body) { opts.headers["Content-Type"] = "application/json"; opts.body = JSON.stringify(body); }
+        const r = await fetch(url, opts);
+        if (r.status === 401) location.href = "/login";
+        let data = {};
+        try { data = await r.json(); } catch {}
+        if (!r.ok) throw new Error(data.message || "Something went wrong. Try again.");
+        return data;
+      }
+
+      let toastTimer = 0;
+      function toast(msg, bad = false) {
+        const t = $("toast");
+        t.textContent = msg;
+        t.classList.toggle("bad", bad);
+        t.hidden = false;
+        clearTimeout(toastTimer);
+        toastTimer = setTimeout(() => (t.hidden = true), 2800);
+      }
+
+      // Crop to the middle square and shrink to 256px
+      async function squarePicture(file, size = 256) {
+        const url = URL.createObjectURL(file);
+        try {
+          const img = await new Promise((resolve, reject) => {
+            const i = new Image();
+            i.onload = () => resolve(i);
+            i.onerror = () => reject(new Error("That file isn't a picture this browser can read"));
+            i.src = url;
+          });
+          const s = Math.min(img.naturalWidth, img.naturalHeight);
+          const c = document.createElement("canvas");
+          c.width = c.height = size;
+          c.getContext("2d").drawImage(img, (img.naturalWidth - s) / 2, (img.naturalHeight - s) / 2, s, s, 0, 0, size, size);
+          return await new Promise((resolve) => c.toBlob(resolve, "image/webp", 0.9));
+        } finally {
+          URL.revokeObjectURL(url);
+        }
+      }
+
+      // ---------------- state ----------------
+      let me = null;
+      let users = [];
+      let filter = "all";
+
+      // ---------------- tabs ----------------
+      function showTab(which) {
+        const u = which === "users";
+        $("tabUsers").setAttribute("aria-selected", String(u));
+        $("tabSettings").setAttribute("aria-selected", String(!u));
+        $("panelUsers").hidden = !u;
+        $("panelSettings").hidden = u;
+        history.replaceState(null, "", u ? "#users" : "#settings");
+      }
+      $("tabUsers").onclick = () => showTab("users");
+      $("tabSettings").onclick = () => showTab("settings");
+
+      // ---------------- users table ----------------
+      const joined = (iso) => new Date(iso).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" });
+
+      function renderUsers() {
+        $("userCount").textContent = users.length;
+        const q = $("search").value.trim().toLowerCase();
+        const shown = users.filter(
+          (u) =>
+            (filter === "all" || u.status === filter) &&
+            (!q || u.username.toLowerCase().includes(q) || u.user_id.toLowerCase().includes(q)),
+        );
+        const rows = shown.map((u) => {
+          const self = me && u.id === me.id;
+          const sw = el("input", { type: "checkbox", checked: u.status === "active", disabled: self });
+          sw.setAttribute("aria-label", `${u.username} can sign in`);
+          const label = el("span", {}, u.status === "active" ? "Active" : "Inactive");
+          sw.onchange = () => setStatus(u, sw, label);
+          const tr = el(
+            "tr",
+            { className: u.status === "active" ? "" : "off" },
+            el("td", { className: "c-who" },
+              el("div", { className: "who" },
+                userAvatar(u.username, u.image),
+                el("span", {}, el("span", { className: "nm" }, u.username), self ? el("span", { className: "you" }, "you") : null))),
+            el("td", { className: "c-uid uid" }, u.user_id),
+            el("td", { className: "c-role" }, el("span", { className: "role " + u.role }, u.role === "admin" ? "Admin" : "Member")),
+            el("td", { className: "c-status" },
+              el("label", { className: "switch", title: self ? "You can't turn yourself off" : "" }, sw, el("span", { className: "track" }), label)),
+            el("td", { className: "c-msgs num" }, String(u.messages ?? 0)),
+            el("td", { className: "c-joined num" }, joined(u.created_at)),
+            el("td", { className: "c-acts" },
+              el("div", { className: "acts" },
+                el("button", { className: "pill", type: "button", textContent: "Edit", onclick: () => openEdit(u) }),
+                el("button", { className: "pill", type: "button", textContent: "Password", onclick: () => openPass(u) }))),
+          );
+          return tr;
+        });
+        if (!rows.length) {
+          rows.push(el("tr", { className: "empty-row" }, el("td", { colSpan: 7 }, users.length ? "No one matches that." : "No users yet.")));
+        }
+        $("rows").replaceChildren(...rows);
+      }
+
+      async function loadUsers() {
+        users = await api("GET", "/api/admin/users");
+        renderUsers();
+      }
+
+      function replaceUser(u) {
+        const i = users.findIndex((x) => x.id === u.id);
+        if (i >= 0) users[i] = { ...users[i], ...u };
+        else users.push(u);
+        renderUsers();
+      }
+
+      async function setStatus(u, sw, label) {
+        const status = sw.checked ? "active" : "inactive";
+        try {
+          replaceUser(await api("PATCH", `/api/admin/users/${u.id}`, { status }));
+          toast(status === "active" ? `${u.username} can sign in again` : `${u.username} is turned off and signed out`);
+        } catch (err) {
+          sw.checked = !sw.checked;
+          label.textContent = sw.checked ? "Active" : "Inactive";
+          toast(err.message, true);
+        }
+      }
+
+      $("search").oninput = renderUsers;
+      document.querySelectorAll(".seg button").forEach((b) => {
+        b.onclick = () => {
+          filter = b.dataset.filter;
+          document.querySelectorAll(".seg button").forEach((x) => x.setAttribute("aria-pressed", String(x === b)));
+          renderUsers();
+        };
+      });
+
+      // ---------------- create / edit dialog ----------------
+      const udlg = $("userDlg");
+      let editing = null; // user being edited, null = creating
+
+      function syncPic() {
+        const u = editing && users.find((x) => x.id === editing.id);
+        $("picAvatar").replaceChildren(userAvatar($("fUsername").value || u?.username || "?", u?.image, "lg"));
+        $("picRemove").hidden = !u?.image;
+      }
+
+      $("newUser").onclick = () => {
+        editing = null;
+        $("userForm").reset();
+        $("userDlgTitle").textContent = "New user";
+        $("userSave").textContent = "Create user";
+        $("picRow").hidden = true;
+        $("fUserId").disabled = false;
+        $("fUserIdHint").textContent = "Fixed login code. It can't be changed later.";
+        $("fPassField").hidden = false;
+        $("fPassword").required = true;
+        $("fRole").disabled = false;
+        $("userErr").textContent = "";
+        udlg.showModal();
+        $("fUsername").focus();
+      };
+
+      function openEdit(u) {
+        editing = u;
+        $("userForm").reset();
+        $("userDlgTitle").textContent = `Edit ${u.username}`;
+        $("userSave").textContent = "Save changes";
+        $("picRow").hidden = false;
+        $("fUsername").value = u.username;
+        $("fUserId").value = u.user_id;
+        $("fUserId").disabled = true;
+        $("fUserIdHint").textContent = "User IDs never change, so they're always safe to sign in with.";
+        $("fPassField").hidden = true;
+        $("fPassword").required = false;
+        $("fRole").value = u.role;
+        $("fRole").disabled = me && u.id === me.id; // you can't demote yourself
+        $("userErr").textContent = "";
+        syncPic();
+        udlg.showModal();
+      }
+
+      $("fUsername").addEventListener("input", () => editing && syncPic());
+
+      $("userForm").addEventListener("submit", async (e) => {
+        e.preventDefault();
+        $("userErr").textContent = "";
+        try {
+          if (editing) {
+            const body = { username: $("fUsername").value.trim() };
+            if (!$("fRole").disabled) body.role = $("fRole").value;
+            const u = await api("PATCH", `/api/admin/users/${editing.id}`, body);
+            replaceUser(u);
+            if (me && u.id === me.id) me = { ...me, ...u };
+            toast("Saved");
+          } else {
+            const u = await api("POST", "/api/admin/users", {
+              username: $("fUsername").value.trim(),
+              user_id: $("fUserId").value.trim(),
+              password: $("fPassword").value,
+              role: $("fRole").value,
+            });
+            replaceUser(u);
+            toast(`${u.username} can now sign in with ${u.user_id} or their username`);
+          }
+          udlg.close();
+        } catch (err) {
+          $("userErr").textContent = err.message;
+        }
+      });
+
+      $("picFile").onchange = async () => {
+        const file = $("picFile").files[0];
+        $("picFile").value = "";
+        if (!file || !editing) return;
+        try {
+          const blob = await squarePicture(file);
+          const fd = new FormData();
+          fd.append("image", blob, blob.type === "image/webp" ? "avatar.webp" : "avatar.png");
+          replaceUser(await api("POST", `/api/admin/users/${editing.id}/image`, fd));
+          syncPic();
+          toast("Picture updated");
+        } catch (err) {
+          $("userErr").textContent = err.message;
+        }
+      };
+
+      $("picRemove").onclick = async () => {
+        try {
+          replaceUser(await api("DELETE", `/api/admin/users/${editing.id}/image`));
+          syncPic();
+          toast("Picture removed");
+        } catch (err) {
+          $("userErr").textContent = err.message;
+        }
+      };
+
+      // ---------------- password dialog ----------------
+      const pdlg = $("passDlg");
+      let passUser = null;
+
+      function openPass(u) {
+        passUser = u;
+        $("passForm").reset();
+        $("passErr").textContent = "";
+        $("passFor").textContent = `Set a new password for ${u.username} (${u.user_id}). Tell them, and they can change it from their profile.`;
+        pdlg.showModal();
+        $("pNew").focus();
+      }
+
+      $("passForm").addEventListener("submit", async (e) => {
+        e.preventDefault();
+        if ($("pNew").value !== $("pNew2").value) return ($("passErr").textContent = "The two passwords don't match");
+        try {
+          await api("PUT", `/api/admin/users/${passUser.id}/password`, { password: $("pNew").value });
+          pdlg.close();
+          toast(`Password changed for ${passUser.username}`);
+        } catch (err) {
+          $("passErr").textContent = err.message;
+        }
+      });
+
+      for (const d of [udlg, pdlg]) {
+        d.querySelectorAll("[data-close]").forEach((b) => (b.onclick = () => d.close()));
+        d.addEventListener("click", (e) => { if (e.target === d) d.close(); });
+      }
+
+      // ---------------- settings ----------------
+      const SETTINGS = [
+        ["Fun", [
+          ["crackers_enabled", "Diwali crackers", "People can set off crackers in chats. Everyone in the chat sees and hears them."],
+          ["board_enabled", "Shared drawing board", "A whiteboard in every chat for diagrams. Turning it off closes any board that's open."],
+        ]],
+        ["Chat", [
+          ["attachments_enabled", "Send files", "Attach pictures and files to messages. Files already sent stay downloadable."],
+          ["direct_messages_enabled", "Direct messages", "Private one-to-one chats. When off, nobody can start or write in them; old messages stay readable."],
+        ]],
+        ["Profiles", [
+          ["users_can_change_username", "Members can change their username", "Admins can always rename anyone from the Users tab."],
+          ["users_can_change_picture", "Members can change their profile picture", "Admins can always set or remove pictures from the Users tab."],
+        ]],
+      ];
+
+      function renderSettings(values) {
+        $("settingGroups").replaceChildren(
+          ...SETTINGS.map(([title, items]) =>
+            el("div", { className: "group" },
+              el("h2", {}, title),
+              el("div", { className: "card" },
+                items.map(([key, t, d]) => {
+                  const sw = el("input", { type: "checkbox", checked: !!values[key], id: "set-" + key });
+                  const saved = el("span", { className: "saved" }, "Saved");
+                  sw.onchange = async () => {
+                    sw.disabled = true;
+                    try {
+                      const next = await api("PUT", "/api/admin/settings", { [key]: sw.checked });
+                      sw.checked = !!next[key];
+                      saved.classList.add("show");
+                      setTimeout(() => saved.classList.remove("show"), 1600);
+                    } catch (err) {
+                      sw.checked = !sw.checked;
+                      toast(err.message, true);
+                    } finally {
+                      sw.disabled = false;
+                    }
+                  };
+                  return el("div", { className: "set" },
+                    el("label", { className: "txt", htmlFor: "set-" + key },
+                      el("div", { className: "t" }, t),
+                      el("div", { className: "d" }, d)),
+                    saved,
+                    el("label", { className: "switch" }, sw, el("span", { className: "track" })));
+                })))),
+        );
+      }
+
+      // ---------------- boot ----------------
+      (async () => {
+        const r = await fetch("/me");
+        if (!r.ok) return (location.href = "/login");
+        me = await r.json();
+        if (me.role !== "admin") return (location.href = "/");
+        renderSettings(me.settings);
+        if (location.hash === "#settings") showTab("settings");
+        await loadUsers();
+      })();
+    </script>
+  </body>
+</html>

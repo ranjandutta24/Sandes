@@ -1,8 +1,8 @@
 const express = require("express");
 const pool = require("./db");
 const session = require("express-session");
-const bcrypt = require("bcrypt");
 const http = require("http");
+const util = require("util");
 const { Server } = require("socket.io");
 const path = require("path");
 const fs = require("fs");
@@ -34,6 +34,80 @@ const upload = multer({
     limits: { files: MAX_FILES },
 });
 
+// Profile pictures: the browser already crops them to a small square, so they stay tiny
+const AVATAR_DIR = path.join(UPLOAD_DIR, "avatars");
+fs.mkdirSync(AVATAR_DIR, { recursive: true });
+const AVATAR_FILE = /^[a-f0-9-]{36}\.(png|jpg|gif|webp)$/;
+const avatarUpload = multer({ storage: multer.memoryStorage(), limits: { files: 1, fileSize: 8 * 1024 * 1024 } });
+
+// Real image type from the first bytes (never trust the name or the browser's mime type)
+function imageKind(buf) {
+    if (buf.length > 8 && buf.readUInt32BE(0) === 0x89504e47) return "png";
+    if (buf.length > 3 && buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff) return "jpg";
+    if (buf.length > 6 && buf.toString("ascii", 0, 4) === "GIF8") return "gif";
+    if (buf.length > 12 && buf.toString("ascii", 0, 4) === "RIFF" && buf.toString("ascii", 8, 12) === "WEBP") return "webp";
+    return null;
+}
+const AVATAR_MIME = { png: "image/png", jpg: "image/jpeg", gif: "image/gif", webp: "image/webp" };
+const avatarUrl = (image) => (image ? `/avatars/${image}` : null);
+const removeAvatarFile = (image) => image && AVATAR_FILE.test(image) && fs.unlink(path.join(AVATAR_DIR, image), () => {});
+
+// ------------------------------------------------------------------
+// Passwords: scrypt hashes ("scrypt$salt$hash"). Old plain-text passwords still work
+// and are replaced with a hash the next time that person signs in.
+// ------------------------------------------------------------------
+const scrypt = util.promisify(crypto.scrypt);
+
+async function hashPassword(password) {
+    const salt = crypto.randomBytes(16);
+    const hash = await scrypt(password, salt, 64);
+    return `scrypt$${salt.toString("hex")}$${hash.toString("hex")}`;
+}
+
+async function checkPassword(password, stored) {
+    if (typeof stored !== "string") return { ok: false };
+    if (stored.startsWith("scrypt$")) {
+        const [, salt, hash] = stored.split("$");
+        const want = Buffer.from(hash || "", "hex");
+        if (!salt || !want.length) return { ok: false };
+        const got = await scrypt(password, Buffer.from(salt, "hex"), want.length);
+        return { ok: crypto.timingSafeEqual(got, want) };
+    }
+    const a = Buffer.from(String(password)), b = Buffer.from(stored);
+    return { ok: a.length === b.length && crypto.timingSafeEqual(a, b), legacy: true };
+}
+
+const USERNAME_RE = /^[\p{L}\p{N}._-]{2,40}$/u;
+const USER_ID_RE = /^[A-Za-z0-9_-]{3,30}$/;
+const MIN_PASSWORD = 6;
+const passwordProblem = (p) =>
+    typeof p !== "string" || p.length < MIN_PASSWORD
+        ? `Use at least ${MIN_PASSWORD} characters for the password`
+        : p.length > 200 ? "That password is too long" : null;
+
+/** Usernames and user IDs share one namespace, so "log in with either" is never ambiguous. */
+async function nameTaken(value, exceptId = 0) {
+    const { rows } = await pool.query(
+        "SELECT 1 FROM users WHERE id <> $2 AND (lower(username) = lower($1) OR lower(user_id) = lower($1))",
+        [value, exceptId],
+    );
+    return rows.length > 0;
+}
+
+// ------------------------------------------------------------------
+// Settings (sandes.settings), cached in memory. Admins change them, everyone gets "settings".
+// ------------------------------------------------------------------
+const SETTING_KEYS = [
+    "crackers_enabled", "board_enabled", "attachments_enabled",
+    "direct_messages_enabled", "users_can_change_username", "users_can_change_picture",
+];
+const settings = Object.fromEntries(SETTING_KEYS.map((k) => [k, true]));
+
+async function loadSettings() {
+    const { rows } = await pool.query("SELECT key, value FROM settings");
+    for (const r of rows) if (SETTING_KEYS.includes(r.key)) settings[r.key] = r.value === true;
+}
+
 // ------------------------------------------------------------------
 // Middleware
 // ------------------------------------------------------------------
@@ -50,11 +124,61 @@ io.use((socket, next) => {
 
 app.use(express.urlencoded({ extended: true }));
 app.use(express.json());
-app.use(express.static(path.join(__dirname, "public")));
+// index: false -> "/" goes through the sign-in check below instead of serving index.html directly
+app.use(express.static(path.join(__dirname, "public"), { index: false }));
 
-function requireUser(req, res, next) {
-    if (!req.session.user) return res.status(401).json({ message: "Not signed in" });
+const USER_COLUMNS = "id, user_id, username, role, status, image, created_at";
+
+async function loadUser(id) {
+    const { rows } = await pool.query(`SELECT ${USER_COLUMNS} FROM users WHERE id = $1`, [id]);
+    return rows[0];
+}
+
+/** What a browser gets to know about a user */
+const publicUser = (u) => ({
+    id: u.id, user_id: u.user_id, username: u.username, role: u.role,
+    status: u.status, image: avatarUrl(u.image), created_at: u.created_at,
+});
+
+// Every request re-reads the user, so renames, role changes and "inactive" apply at once
+async function requireUser(req, res, next) {
+    const id = req.session.user && req.session.user.id;
+    if (!id) return res.status(401).json({ message: "Not signed in" });
+    const u = await loadUser(id);
+    if (!u || u.status !== "active") {
+        req.session.destroy(() => {});
+        return res.status(401).json({ message: u ? "Your account has been turned off" : "Not signed in" });
+    }
+    req.session.user = { id: u.id, username: u.username };
+    req.user = u;
     next();
+}
+
+function requireAdmin(req, res, next) {
+    return requireUser(req, res, () => {
+        if (req.user.role !== "admin") return res.status(403).json({ message: "Only admins can do that" });
+        next();
+    });
+}
+
+// Live sockets per user, so account changes reach every open tab
+const userSockets = new Map(); // user id -> Set(socket)
+const socketsOf = (id) => [...(userSockets.get(id) || [])];
+
+/** Tell everyone about a changed name/picture, and the user themself about the rest */
+function userChanged(u) {
+    for (const s of socketsOf(u.id)) {
+        s.user.username = u.username;
+        s.user.role = u.role;
+        s.emit("profile", publicUser(u));
+    }
+    io.emit("user:updated", { id: u.id, username: u.username, image: avatarUrl(u.image) });
+    if (u.status !== "active") {
+        for (const s of socketsOf(u.id)) {
+            s.emit("account:disabled");
+            s.disconnect(true);
+        }
+    }
 }
 
 // ------------------------------------------------------------------
@@ -62,8 +186,10 @@ function requireUser(req, res, next) {
 // ------------------------------------------------------------------
 let MAIN_ROOM_ID = null;
 
+// Names and pictures come from the users table, so a rename shows on old messages too
 const MESSAGE_SELECT = `
-    SELECT m.id, m.conversation_id, m.sender, m.sender_id, m.message,
+    SELECT m.id, m.conversation_id, COALESCE(u.username, m.sender) AS sender, m.sender_id, m.message,
+           CASE WHEN u.image IS NOT NULL THEN '/avatars/' || u.image END AS sender_image,
            m.created_at AS "timestamp",
            COALESCE(
                json_agg(json_build_object(
@@ -74,10 +200,11 @@ const MESSAGE_SELECT = `
                '[]'
            ) AS attachments
     FROM chat_messages m
+    LEFT JOIN users u ON u.id = m.sender_id
     LEFT JOIN attachments a ON a.message_id = m.id`;
 
 async function getMessage(id) {
-    const { rows } = await pool.query(`${MESSAGE_SELECT} WHERE m.id = $1 GROUP BY m.id`, [id]);
+    const { rows } = await pool.query(`${MESSAGE_SELECT} WHERE m.id = $1 GROUP BY m.id, u.id`, [id]);
     return rows[0];
 }
 
@@ -85,7 +212,7 @@ async function getHistory(conversationId, limit = 200) {
     const { rows } = await pool.query(
         `SELECT * FROM (
              ${MESSAGE_SELECT} WHERE m.conversation_id = $1
-             GROUP BY m.id ORDER BY m.created_at DESC LIMIT $2
+             GROUP BY m.id, u.id ORDER BY m.created_at DESC LIMIT $2
          ) t ORDER BY "timestamp" ASC`,
         [conversationId, limit],
     );
@@ -93,8 +220,14 @@ async function getHistory(conversationId, limit = 200) {
 }
 
 async function canAccess(userId, conversationId) {
+    return (await accessType(userId, conversationId)) !== null;
+}
+
+/** 'room' / 'direct' if the user may use this conversation, otherwise null */
+async function accessType(userId, conversationId) {
+    if (!Number.isInteger(conversationId)) return null;
     const { rows } = await pool.query(
-        `SELECT 1 FROM conversations c
+        `SELECT c.type FROM conversations c
          WHERE c.id = $1 AND (
              c.is_public OR EXISTS (
                  SELECT 1 FROM conversation_members cm
@@ -103,12 +236,36 @@ async function canAccess(userId, conversationId) {
          )`,
         [conversationId, userId],
     );
-    return rows.length > 0;
+    return rows[0] ? rows[0].type : null;
 }
 
-async function findUserByName(username) {
-    const { rows } = await pool.query("SELECT id, username FROM users WHERE username = $1", [username]);
+/** Why this user can't post here right now (settings), or null if they can */
+function postBlocked(type, hasFiles) {
+    if (type === "direct" && !settings.direct_messages_enabled) return "Direct messages are turned off by the admin";
+    if (hasFiles && !settings.attachments_enabled) return "Sending files is turned off by the admin";
+    return null;
+}
+
+/** Sign-in lookup: username or user ID (case-insensitive for the ID) */
+async function findLogin(login) {
+    const { rows } = await pool.query(
+        `SELECT ${USER_COLUMNS}, password FROM users
+         WHERE username = $1 OR lower(user_id) = lower($1)
+         ORDER BY (username = $1) DESC LIMIT 1`,
+        [String(login || "").trim()],
+    );
     return rows[0];
+}
+
+/** Check a sign-in; upgrades plain-text passwords to a hash. Returns { user } or { error } */
+async function signIn(login, password) {
+    const u = await findLogin(login);
+    const check = u ? await checkPassword(String(password || ""), u.password) : { ok: false };
+    if (!check.ok) return { error: "credentials" };
+    if (u.status !== "active") return { error: "inactive" };
+    if (check.legacy) await pool.query("UPDATE users SET password = $1 WHERE id = $2", [await hashPassword(String(password)), u.id]);
+    delete u.password;
+    return { user: u };
 }
 
 /** Save a message (+ optional uploaded files) and broadcast it. */
@@ -152,40 +309,49 @@ function removeFiles(files = []) {
 // ------------------------------------------------------------------
 // Pages & auth
 // ------------------------------------------------------------------
-app.get("/", (req, res) => {
-    if (req.session.user) {
-        res.sendFile(path.join(__dirname, "public", "index.html"));
-    } else {
-        res.redirect("/login");
+/** Page guard: signed in + active (and admin, if asked), otherwise back to the login page */
+const pageFor = (file, adminOnly = false) => async (req, res) => {
+    const u = req.session.user && (await loadUser(req.session.user.id));
+    if (!u || u.status !== "active") {
+        const inactive = u && u.status !== "active";
+        return req.session.destroy(() => res.redirect(inactive ? "/login?error=inactive" : "/login"));
     }
-});
+    if (adminOnly && u.role !== "admin") return res.redirect("/");
+    res.sendFile(path.join(__dirname, "public", file));
+};
+
+app.get("/", pageFor("index.html"));
+app.get("/admin", pageFor("admin.html", true));
 
 app.get("/login", (req, res) => {
     res.sendFile(path.join(__dirname, "public", "login.html"));
 });
 
+/** Start a fresh session for this user (new session id on every sign-in) */
+const startSession = (req, user) =>
+    new Promise((resolve, reject) =>
+        req.session.regenerate((err) => {
+            if (err) return reject(err);
+            req.session.user = { id: user.id, username: user.username };
+            resolve();
+        }),
+    );
+
 app.post("/login", async (req, res) => {
     const { username, password } = req.body;
-    const { rows } = await pool.query(
-        "SELECT id, username FROM users WHERE username = $1 AND password = $2",
-        [username, password],
-    );
-    const user = rows[0];
-    if (!user) return res.redirect("/login?error=1");
-    req.session.user = user;
+    const r = await signIn(username, password);
+    if (r.error) return res.redirect(`/login?error=${r.error === "inactive" ? "inactive" : "1"}`);
+    await startSession(req, r.user);
     res.redirect("/");
 });
 
 app.post("/login_app", async (req, res) => {
     const { username, password } = req.body;
-    const { rows } = await pool.query(
-        "SELECT id, username FROM users WHERE username = $1 AND password = $2",
-        [username, password],
-    );
-    const user = rows[0];
-    if (!user) return res.status(401).json({ message: "Invalid credentials" });
-    req.session.user = user;
-    return res.status(200).json({ user });
+    const r = await signIn(username, password);
+    if (r.error === "inactive") return res.status(403).json({ message: "Your account has been turned off" });
+    if (r.error) return res.status(401).json({ message: "Invalid credentials" });
+    await startSession(req, r.user);
+    return res.status(200).json({ user: { id: r.user.id, username: r.user.username, user_id: r.user.user_id, role: r.user.role } });
 });
 
 app.get("/logout", (req, res) => {
@@ -193,7 +359,248 @@ app.get("/logout", (req, res) => {
 });
 
 app.get("/me", requireUser, (req, res) => {
-    res.json({ id: req.session.user.id, username: req.session.user.username });
+    res.json({ ...publicUser(req.user), settings });
+});
+
+// ------------------------------------------------------------------
+// Profile pictures
+// ------------------------------------------------------------------
+app.get("/avatars/:file", requireUser, (req, res) => {
+    const name = req.params.file;
+    if (!AVATAR_FILE.test(name)) return res.status(404).send("Not found");
+    res.setHeader("Content-Type", AVATAR_MIME[name.split(".").pop()]);
+    res.setHeader("X-Content-Type-Options", "nosniff");
+    res.setHeader("Cache-Control", "private, max-age=31536000, immutable"); // names are never reused
+    res.sendFile(path.join(AVATAR_DIR, name), (err) => {
+        if (err && !res.headersSent) res.status(404).send("Not found");
+    });
+});
+
+/** Store an uploaded picture for a user (replacing the old one). Returns the updated user. */
+async function setAvatar(userId, file) {
+    const kind = file && imageKind(file.buffer);
+    if (!kind) return { error: "Choose a PNG, JPG, GIF or WebP picture" };
+    const name = `${crypto.randomUUID()}.${kind}`;
+    await fs.promises.writeFile(path.join(AVATAR_DIR, name), file.buffer);
+    const old = await loadUser(userId);
+    await pool.query("UPDATE users SET image = $1, updated_at = NOW() WHERE id = $2", [name, userId]);
+    removeAvatarFile(old && old.image);
+    return { user: await loadUser(userId) };
+}
+
+async function clearAvatar(userId) {
+    const old = await loadUser(userId);
+    await pool.query("UPDATE users SET image = NULL, updated_at = NOW() WHERE id = $1", [userId]);
+    removeAvatarFile(old && old.image);
+    return loadUser(userId);
+}
+
+/** Run the avatar upload middleware and report its errors as JSON */
+const readAvatar = (req, res) =>
+    new Promise((resolve) =>
+        avatarUpload.single("image")(req, res, (err) => {
+            if (err) {
+                res.status(400).json({ message: err.code === "LIMIT_FILE_SIZE" ? "That picture is too big (8 MB max)" : "Upload failed" });
+                return resolve(null);
+            }
+            if (!req.file) {
+                res.status(400).json({ message: "Choose a picture first" });
+                return resolve(null);
+            }
+            resolve(req.file);
+        }),
+    );
+
+// ------------------------------------------------------------------
+// Your own profile: username, password, picture
+// ------------------------------------------------------------------
+app.put("/api/profile/username", requireUser, async (req, res) => {
+    if (!settings.users_can_change_username && req.user.role !== "admin") {
+        return res.status(403).json({ message: "Changing usernames is turned off by the admin" });
+    }
+    const username = String(req.body.username || "").trim();
+    if (!USERNAME_RE.test(username)) {
+        return res.status(400).json({ message: "Use 2 to 40 letters, numbers, dots, dashes or underscores (no spaces)" });
+    }
+    if (username === req.user.username) return res.json(publicUser(req.user));
+    if (await nameTaken(username, req.user.id)) return res.status(409).json({ message: "That name is already taken" });
+    await pool.query("UPDATE users SET username = $1, updated_at = NOW() WHERE id = $2", [username, req.user.id]);
+    const u = await loadUser(req.user.id);
+    req.session.user.username = u.username;
+    userChanged(u);
+    res.json(publicUser(u));
+});
+
+app.put("/api/profile/password", requireUser, async (req, res) => {
+    const { current, password } = req.body;
+    const { rows } = await pool.query("SELECT password FROM users WHERE id = $1", [req.user.id]);
+    if (!(await checkPassword(String(current || ""), rows[0].password)).ok) {
+        return res.status(400).json({ message: "Your current password isn't right" });
+    }
+    const problem = passwordProblem(password);
+    if (problem) return res.status(400).json({ message: problem });
+    await pool.query("UPDATE users SET password = $1, updated_at = NOW() WHERE id = $2", [await hashPassword(password), req.user.id]);
+    res.json({ ok: true });
+});
+
+app.post("/api/profile/image", requireUser, async (req, res) => {
+    if (!settings.users_can_change_picture && req.user.role !== "admin") {
+        return res.status(403).json({ message: "Changing profile pictures is turned off by the admin" });
+    }
+    const file = await readAvatar(req, res);
+    if (!file) return;
+    const r = await setAvatar(req.user.id, file);
+    if (r.error) return res.status(400).json({ message: r.error });
+    userChanged(r.user);
+    res.json(publicUser(r.user));
+});
+
+app.delete("/api/profile/image", requireUser, async (req, res) => {
+    if (!settings.users_can_change_picture && req.user.role !== "admin") {
+        return res.status(403).json({ message: "Changing profile pictures is turned off by the admin" });
+    }
+    const u = await clearAvatar(req.user.id);
+    userChanged(u);
+    res.json(publicUser(u));
+});
+
+// ------------------------------------------------------------------
+// Admin: users + settings
+// ------------------------------------------------------------------
+app.get("/api/admin/users", requireAdmin, async (req, res) => {
+    const { rows } = await pool.query(
+        `SELECT ${USER_COLUMNS},
+                (SELECT count(*)::int FROM chat_messages m WHERE m.sender_id = users.id) AS messages
+         FROM users ORDER BY (role = 'admin') DESC, lower(username)`,
+    );
+    res.json(rows.map((u) => ({ ...publicUser(u), messages: u.messages })));
+});
+
+app.post("/api/admin/users", requireAdmin, async (req, res) => {
+    const username = String(req.body.username || "").trim();
+    const userId = String(req.body.user_id || "").trim();
+    const role = req.body.role === "admin" ? "admin" : "user";
+    const { password } = req.body;
+    if (!USERNAME_RE.test(username)) {
+        return res.status(400).json({ message: "Username: use 2 to 40 letters, numbers, dots, dashes or underscores (no spaces)" });
+    }
+    if (userId && !USER_ID_RE.test(userId)) {
+        return res.status(400).json({ message: "User ID: use 3 to 30 letters, numbers, dashes or underscores" });
+    }
+    const problem = passwordProblem(password);
+    if (problem) return res.status(400).json({ message: problem });
+    if (await nameTaken(username)) return res.status(409).json({ message: "That username is already taken" });
+    if (userId && (await nameTaken(userId))) return res.status(409).json({ message: "That user ID is already taken" });
+    if (userId && userId.toLowerCase() === username.toLowerCase()) {
+        return res.status(400).json({ message: "Make the user ID different from the username" });
+    }
+    try {
+        const { rows } = await pool.query(
+            `INSERT INTO users (username, password, user_id, role) VALUES ($1, $2, $3, $4) RETURNING ${USER_COLUMNS}`,
+            [username, await hashPassword(password), userId || null, role],
+        );
+        res.status(201).json({ ...publicUser(rows[0]), messages: 0 });
+    } catch (err) {
+        if (err.code === "23505") return res.status(409).json({ message: "That username or user ID is already taken" });
+        throw err;
+    }
+});
+
+async function activeAdmins(exceptId) {
+    const { rows } = await pool.query(
+        "SELECT count(*)::int AS n FROM users WHERE role = 'admin' AND status = 'active' AND id <> $1",
+        [exceptId],
+    );
+    return rows[0].n;
+}
+
+// Change username / role / status of a user
+app.patch("/api/admin/users/:id", requireAdmin, async (req, res) => {
+    const id = Number(req.params.id);
+    const target = Number.isInteger(id) && (await loadUser(id));
+    if (!target) return res.status(404).json({ message: "That user doesn't exist" });
+    const sets = [], vals = [];
+
+    if (req.body.username !== undefined) {
+        const username = String(req.body.username).trim();
+        if (!USERNAME_RE.test(username)) {
+            return res.status(400).json({ message: "Username: use 2 to 40 letters, numbers, dots, dashes or underscores (no spaces)" });
+        }
+        if (username !== target.username) {
+            if (await nameTaken(username, id)) return res.status(409).json({ message: "That username is already taken" });
+            vals.push(username);
+            sets.push(`username = $${vals.length}`);
+        }
+    }
+    for (const [field, allowed] of [["role", ["admin", "user"]], ["status", ["active", "inactive"]]]) {
+        if (req.body[field] === undefined || req.body[field] === target[field]) continue;
+        if (!allowed.includes(req.body[field])) return res.status(400).json({ message: `Unknown ${field}` });
+        // never lock everyone out: the last active admin stays an active admin
+        const losesAdmin = (field === "role" && req.body.role !== "admin") || (field === "status" && req.body.status !== "active");
+        if (losesAdmin && target.role === "admin") {
+            if (id === req.user.id) return res.status(400).json({ message: "You can't remove your own admin access or turn yourself off" });
+            if ((await activeAdmins(id)) === 0) return res.status(400).json({ message: "Keep at least one active admin" });
+        }
+        vals.push(req.body[field]);
+        sets.push(`${field} = $${vals.length}`);
+    }
+    if (!sets.length) return res.json(publicUser(target));
+    vals.push(id);
+    try {
+        await pool.query(`UPDATE users SET ${sets.join(", ")}, updated_at = NOW() WHERE id = $${vals.length}`, vals);
+    } catch (err) {
+        if (err.code === "23505") return res.status(409).json({ message: "That username is already taken" });
+        throw err;
+    }
+    const u = await loadUser(id);
+    userChanged(u);
+    res.json(publicUser(u));
+});
+
+app.put("/api/admin/users/:id/password", requireAdmin, async (req, res) => {
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id) || !(await loadUser(id))) return res.status(404).json({ message: "That user doesn't exist" });
+    const problem = passwordProblem(req.body.password);
+    if (problem) return res.status(400).json({ message: problem });
+    await pool.query("UPDATE users SET password = $1, updated_at = NOW() WHERE id = $2", [await hashPassword(req.body.password), id]);
+    res.json({ ok: true });
+});
+
+app.post("/api/admin/users/:id/image", requireAdmin, async (req, res) => {
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id) || !(await loadUser(id))) return res.status(404).json({ message: "That user doesn't exist" });
+    const file = await readAvatar(req, res);
+    if (!file) return;
+    const r = await setAvatar(id, file);
+    if (r.error) return res.status(400).json({ message: r.error });
+    userChanged(r.user);
+    res.json(publicUser(r.user));
+});
+
+app.delete("/api/admin/users/:id/image", requireAdmin, async (req, res) => {
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id) || !(await loadUser(id))) return res.status(404).json({ message: "That user doesn't exist" });
+    const u = await clearAvatar(id);
+    userChanged(u);
+    res.json(publicUser(u));
+});
+
+app.get("/api/admin/settings", requireAdmin, (req, res) => res.json(settings));
+
+app.put("/api/admin/settings", requireAdmin, async (req, res) => {
+    const changes = Object.entries(req.body || {}).filter(([k, v]) => SETTING_KEYS.includes(k) && typeof v === "boolean");
+    if (!changes.length) return res.status(400).json({ message: "Nothing to change" });
+    for (const [key, value] of changes) {
+        await pool.query(
+            `INSERT INTO settings (key, value, updated_by, updated_at) VALUES ($1, $2, $3, NOW())
+             ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_by = EXCLUDED.updated_by, updated_at = NOW()`,
+            [key, JSON.stringify(value), req.user.id],
+        );
+        settings[key] = value;
+    }
+    if (!settings.board_enabled) closeAllBoards();
+    io.emit("settings", settings);
+    res.json(settings);
 });
 
 // ------------------------------------------------------------------
@@ -203,10 +610,10 @@ app.get("/me", requireUser, (req, res) => {
 // Everyone you can start a direct chat with
 app.get("/api/users", requireUser, async (req, res) => {
     const { rows } = await pool.query(
-        "SELECT id, username FROM users WHERE id <> $1 ORDER BY username",
+        "SELECT id, username, image FROM users WHERE id <> $1 AND status = 'active' ORDER BY lower(username)",
         [req.session.user.id],
     );
-    res.json(rows);
+    res.json(rows.map((u) => ({ id: u.id, username: u.username, image: avatarUrl(u.image) })));
 });
 
 // Main room + your direct chats, most recent first
@@ -216,6 +623,7 @@ app.get("/api/conversations", requireUser, async (req, res) => {
         `SELECT c.id, c.type,
                 CASE WHEN c.type = 'direct' THEN other.username ELSE c.name END AS name,
                 other.id AS other_user_id,
+                CASE WHEN other.image IS NOT NULL THEN '/avatars/' || other.image END AS image,
                 c.slug,
                 last.message AS last_message,
                 last.has_attachments AS last_has_attachments,
@@ -223,15 +631,16 @@ app.get("/api/conversations", requireUser, async (req, res) => {
                 COALESCE(last.created_at, c.created_at) AS last_activity
          FROM conversations c
          LEFT JOIN LATERAL (
-             SELECT u.id, u.username FROM conversation_members cm
+             SELECT u.id, u.username, u.image FROM conversation_members cm
              JOIN users u ON u.id = cm.user_id
              WHERE cm.conversation_id = c.id AND cm.user_id <> $1
              LIMIT 1
          ) other ON c.type = 'direct'
          LEFT JOIN LATERAL (
-             SELECT m.message, m.sender, m.created_at,
+             SELECT m.message, COALESCE(su.username, m.sender) AS sender, m.created_at,
                     EXISTS (SELECT 1 FROM attachments a WHERE a.message_id = m.id) AS has_attachments
-             FROM chat_messages m WHERE m.conversation_id = c.id
+             FROM chat_messages m LEFT JOIN users su ON su.id = m.sender_id
+             WHERE m.conversation_id = c.id
              ORDER BY m.created_at DESC LIMIT 1
          ) last ON TRUE
          WHERE c.is_public
@@ -247,9 +656,10 @@ app.get("/api/conversations", requireUser, async (req, res) => {
 app.post("/api/conversations/direct", requireUser, async (req, res) => {
     const me = req.session.user.id;
     const other = Number(req.body.userId);
-    if (!other || other === me) return res.status(400).json({ message: "Choose someone else to message" });
+    if (!settings.direct_messages_enabled) return res.status(403).json({ message: "Direct messages are turned off by the admin" });
+    if (!Number.isInteger(other) || !other || other === me) return res.status(400).json({ message: "Choose someone else to message" });
 
-    const { rows: users } = await pool.query("SELECT id, username FROM users WHERE id = $1", [other]);
+    const { rows: users } = await pool.query("SELECT id, username, image FROM users WHERE id = $1 AND status = 'active'", [other]);
     if (!users[0]) return res.status(404).json({ message: "That user doesn't exist" });
 
     const key = `${Math.min(me, other)}:${Math.max(me, other)}`;
@@ -282,7 +692,7 @@ app.post("/api/conversations/direct", requireUser, async (req, res) => {
     io.in(`user:${me}`).socketsJoin(`conv:${conversationId}`);
     io.in(`user:${other}`).socketsJoin(`conv:${conversationId}`);
 
-    res.json({ id: conversationId, type: "direct", name: users[0].username, other_user_id: other });
+    res.json({ id: conversationId, type: "direct", name: users[0].username, other_user_id: other, image: avatarUrl(users[0].image) });
 });
 
 app.get("/api/conversations/:id/messages", requireUser, async (req, res) => {
@@ -307,9 +717,15 @@ app.post("/api/conversations/:id/messages", requireUser, (req, res) => {
         }
         try {
             const id = Number(req.params.id);
-            if (!(await canAccess(req.session.user.id, id))) {
+            const type = await accessType(req.session.user.id, id);
+            if (!type) {
                 removeFiles(files);
                 return res.status(403).json({ message: "You're not part of this conversation" });
+            }
+            const blocked = postBlocked(type, files.length > 0);
+            if (blocked) {
+                removeFiles(files);
+                return res.status(403).json({ message: blocked });
             }
             const text = (req.body.message || "").trim();
             if (!text && files.length === 0) {
@@ -384,7 +800,7 @@ function registerCrackers(socket) {
             if (!d || !CRACKER_KINDS.has(d.kind) || !CRACKER_ID.test(String(d.id))) return;
             if (unlit.size >= MAX_UNLIT_CRACKERS || unlit.has(d.id)) return;
             const conversationId = Number(d.conversationId);
-            if (boardIsOn(conversationId)) return; // no crackers while the board is open
+            if (!settings.crackers_enabled || boardIsOn(conversationId)) return; // off, or the board is open
             if (!(await canAccess(user.id, conversationId))) return;
             unlit.set(d.id, { conv: conversationId, kind: d.kind });
             socket.to(`conv:${conversationId}`).emit("cracker:place", {
@@ -402,7 +818,7 @@ function registerCrackers(socket) {
             if (t - lastThrow < 250) return;
             lastThrow = t;
             const conversationId = Number(d.conversationId);
-            if (boardIsOn(conversationId)) return;
+            if (!settings.crackers_enabled || boardIsOn(conversationId)) return;
             if (!(await canAccess(user.id, conversationId))) return;
             socket.to(`conv:${conversationId}`).emit("cracker:throw", {
                 id: d.id, kind: d.kind, x: unit(d.x), y: unit(d.y), conversationId, by: user.username,
@@ -424,7 +840,7 @@ function registerCrackers(socket) {
         if (!entry) return;
         unlit.delete(d.id);
         // the board opened while this one was waiting: everyone already cleared it, just drop it
-        if (event === "cracker:ignite" && boardIsOn(entry.conv)) return;
+        if (event === "cracker:ignite" && (!settings.crackers_enabled || boardIsOn(entry.conv))) return;
         if (event === "cracker:ignite" && HELD_KINDS.has(entry.kind)) {
             held.set(d.id, entry.conv);
             setTimeout(() => held.delete(d.id), HELD_MS);
@@ -489,6 +905,13 @@ function sendPresence(conversationId) {
     io.to(`conv:${conversationId}`).emit("board:presence", { conversationId, viewers: viewerNames(conversationId) });
 }
 
+const boardSessions = new Set(); // one "leave everything" function per connected socket
+
+/** Admin turned the board off: everyone leaves, crackers come back */
+function closeAllBoards() {
+    for (const leaveAll of boardSessions) leaveAll();
+}
+
 function registerBoard(socket) {
     const user = socket.user;
     const joined = new Set(); // conversation ids this socket has the board open for
@@ -534,6 +957,7 @@ function registerBoard(socket) {
     socket.on("board:join", async (d, cb) => {
         try {
             const id = Number(d && d.conversationId);
+            if (!settings.board_enabled) return ack(cb, { error: "The board is turned off by the admin" });
             if (!(await canAccess(user.id, id))) return ack(cb, { error: "You're not part of this conversation" });
             const { rows } = await pool.query(
                 `SELECT b.item_key AS id, b.data, u.username AS by
@@ -620,25 +1044,38 @@ function registerBoard(socket) {
         });
     });
 
+    const leaveAll = () => {
+        for (const id of [...joined]) {
+            socket.emit("board:closed", { conversationId: id });
+            leave(id);
+        }
+    };
+    boardSessions.add(leaveAll);
+
     socket.on("disconnect", () => {
+        boardSessions.delete(leaveAll);
         for (const id of [...joined]) leave(id);
     });
 }
 
 // ------------------------------------------------------------------
 // Socket.io
-// Accepts either: mobile app (io({ auth: { username } })) or browser (session cookie)
+// Accepts either: mobile app (io({ auth: { username } }), username or user ID) or browser (session cookie)
 // ------------------------------------------------------------------
 io.use(async (socket, next) => {
     try {
         const session = socket.request.session;
+        let u = null;
         if (session && session.user && session.user.id) {
-            socket.user = session.user;
+            u = await loadUser(session.user.id);
         } else if (socket.handshake.auth && socket.handshake.auth.username) {
-            socket.user = await findUserByName(socket.handshake.auth.username);
+            u = await findLogin(socket.handshake.auth.username);
         }
-        if (socket.user) return next();
-        next(new Error("Unauthorized"));
+        if (!u) return next(new Error("Unauthorized"));
+        if (u.status !== "active") return next(new Error("Account turned off"));
+        // one mutable object per socket: renames/role changes are applied to it in place
+        socket.user = { id: u.id, username: u.username, role: u.role };
+        next();
     } catch (err) {
         next(err);
     }
@@ -646,6 +1083,15 @@ io.use(async (socket, next) => {
 
 io.on("connection", async (socket) => {
     const user = socket.user;
+    if (!userSockets.has(user.id)) userSockets.set(user.id, new Set());
+    userSockets.get(user.id).add(socket);
+    socket.on("disconnect", () => {
+        const set = userSockets.get(user.id);
+        if (set) {
+            set.delete(socket);
+            if (!set.size) userSockets.delete(user.id);
+        }
+    });
     registerCrackers(socket);
     registerBoard(socket);
 
@@ -670,11 +1116,12 @@ io.on("connection", async (socket) => {
             const text = (typeof data === "string" ? data : data && data.message) || "";
             if (!text.trim()) return;
             const conversationId = Number((data && data.conversationId) || MAIN_ROOM_ID);
-            if (!(await canAccess(user.id, conversationId))) {
-                return socket.emit("error", "You're not part of this conversation");
-            }
-            const senderName = (data && typeof data === "object" && data.sender) || user.username;
-            await createMessage({ conversationId, user, senderName, text: text.trim() });
+            const type = await accessType(user.id, conversationId);
+            if (!type) return socket.emit("error", "You're not part of this conversation");
+            const blocked = postBlocked(type, false);
+            if (blocked) return socket.emit("error", blocked);
+            // the name always comes from the account (legacy clients may send their own "sender")
+            await createMessage({ conversationId, user, text: text.trim() });
         } catch (err) {
             console.error("Error saving message:", err);
             socket.emit("error", "Message not sent. Try again.");
@@ -686,6 +1133,7 @@ io.on("connection", async (socket) => {
 // Start
 // ------------------------------------------------------------------
 pool.ready
+    .then(loadSettings)
     .then(() => pool.query("SELECT id FROM conversations WHERE slug = 'main'"))
     .then(({ rows }) => {
         MAIN_ROOM_ID = rows[0].id;
