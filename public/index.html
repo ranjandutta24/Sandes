@@ -12,6 +12,8 @@
     />
     <link rel="stylesheet" href="/crackers.css" />
     <link rel="stylesheet" href="/board.css" />
+    <link rel="stylesheet" href="/panels.css" />
+    <link rel="stylesheet" href="/themes.css" />
     <style>
       :root {
         --aerogramme: #e3ebf2;
@@ -562,6 +564,7 @@
         .msg.fresh .bubble { animation: none; }
       }
     </style>
+    <link rel="stylesheet" href="/chat.css" />
   </head>
   <body>
     <svg width="0" height="0" style="position: absolute" aria-hidden="true">
@@ -584,23 +587,44 @@
           <h1 class="wordmark"><span class="initial">S</span>andes</h1>
         </div>
 
-        <nav class="lists">
+        <div class="side-search">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="6.5" /><path d="m20 20-4.2-4.2" /></svg>
+          <label for="search" class="sr-only">Search messages</label>
+          <input id="search" type="search" placeholder="Search messages" autocomplete="off" />
+          <button class="search-clear" id="searchClear" type="button" aria-label="Clear search" hidden>×</button>
+        </div>
+
+        <nav class="lists" id="lists">
+          <div class="list-head">
+            <span>Groups</span>
+            <span class="head-btns">
+              <button class="new-chat ghost" id="browseBtn" type="button" title="Find public channels">Browse</button>
+              <button class="new-chat" id="newGroup" type="button" title="New group or channel">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14" /></svg>
+                New
+              </button>
+            </span>
+          </div>
           <div id="rooms"></div>
 
           <div class="list-head">
             <span>Direct messages</span>
-            <button class="new-chat" id="newChat" type="button">
+            <button class="new-chat" id="newChat" type="button" title="New direct message">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14" /></svg>
               New
             </button>
           </div>
           <div id="directs"></div>
         </nav>
+        <div class="results" id="results" hidden></div>
 
         <div class="account">
           <button class="me-btn" id="meBtn" type="button" title="Your profile: picture, username, password">
             <span id="meAvatar"></span>
-            <span class="me-text"><strong id="me">…</strong><small id="meSub">Your profile</small></span>
+            <span class="me-text"><strong id="me">…</strong><small id="meSub">Profile</small></span>
+          </button>
+          <button class="icon-link" id="bellBtn" type="button" title="Notifications" aria-label="Notifications">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 16V11a6 6 0 1 1 12 0v5l1.5 2h-15z" /><path d="M10 20.5a2 2 0 0 0 4 0" /></svg>
           </button>
           <a class="icon-link" id="adminLink" href="/admin" title="Admin: users and settings" aria-label="Admin: users and settings" hidden>
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2.5 4 5.5v6c0 4.6 3.3 8.6 8 10 4.7-1.4 8-5.4 8-10v-6z" /><path d="m9 12 2 2 4-4" /></svg>
@@ -615,21 +639,36 @@
           <button class="back" id="back" type="button" aria-label="Back to conversations">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6" /></svg>
           </button>
-          <div id="chatAvatar"></div>
-          <div>
-            <h2 class="chat-title" id="chatTitle">Main room</h2>
-            <p class="chat-sub" id="chatSub">Everyone can read messages here</p>
+          <div class="head-main" id="headMain" role="button" tabindex="0" title="Chat info">
+            <div id="chatAvatar"></div>
+            <div class="head-text">
+              <h2 class="chat-title" id="chatTitle">Main room</h2>
+              <p class="chat-sub" id="chatSub">Everyone can read messages here</p>
+            </div>
           </div>
+          <div class="head-tools" id="headTools"></div>
         </header>
+
+        <div class="pinbar" id="pinBar" hidden></div>
 
         <main class="feed" id="feed" aria-live="polite">
           <div class="feed-inner" id="messages"></div>
         </main>
+        <button class="to-latest" id="toLatest" type="button" title="Jump to the newest message" hidden>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 5v14M6 13l6 6 6-6" /></svg>
+          <span class="n"></span>
+        </button>
 
         <div class="composer-wrap">
           <div class="composer-inner">
             <div class="status" id="status" role="status"></div>
             <div class="pending" id="pending" aria-label="Files to send"></div>
+            <div class="compose-bar" id="composeBar" hidden></div>
+            <div class="mention-box" id="mentionBox" role="listbox" aria-label="People to mention" hidden></div>
+            <div class="join-bar" id="joinBar" hidden>
+              <span>You're looking at a public channel.</span>
+              <button class="pill-btn solid" id="joinBtn" type="button">Join channel</button>
+            </div>
             <form class="composer" id="composer" autocomplete="off">
               <label class="attach" id="attachBtn" title="Attach files">
                 <span class="sr-only">Attach files</span>
@@ -639,8 +678,16 @@
               <button class="cracker-btn" id="crackerBtn" type="button" title="Diwali crackers" aria-label="Diwali crackers" aria-expanded="false">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="10" cy="15" r="6.5" /><path d="M14.6 10.4c1-1.6 2-2.9 3.9-3.4" /><path d="M20.6 1.8v1.8M23 4.6h-1.8M22.4 2.4l-1.2 1.2" /></svg>
               </button>
-              <label for="msg" class="sr-only">Message</label>
-              <input type="text" id="msg" placeholder="Write a message" maxlength="4000" />
+              <button class="plus-btn" id="plusBtn" type="button" title="Poll, task, notes, effects" aria-label="More: poll, task, notes, effects">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14" /></svg>
+              </button>
+              <div class="msg-box">
+                <label for="msg" class="sr-only">Message</label>
+                <textarea id="msg" rows="1" placeholder="Write a message" maxlength="4000"></textarea>
+                <button class="fx-btn" id="fxBtn" type="button" title="Send with an effect" aria-label="Send with an effect">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3c.7 4.2 1.8 5.3 6 6-4.2.7-5.3 1.8-6 6-.7-4.2-1.8-5.3-6-6 4.2-.7 5.3-1.8 6-6z" /><path d="M19 15c.3 1.7.8 2.2 2.5 2.5-1.7.3-2.2.8-2.5 2.5-.3-1.7-.8-2.2-2.5-2.5 1.7-.3 2.2-.8 2.5-2.5z" /></svg>
+                </button>
+              </div>
               <button class="send" id="send" type="submit">
                 <span>Send</span>
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 2 11 13" /><path d="M22 2 15 22l-4-9-9-4 20-7z" /></svg>
@@ -652,6 +699,8 @@
         <div class="drop" aria-hidden="true">Drop files to attach</div>
       </section>
     </div>
+
+    <div class="toast" id="toast" role="status" hidden></div>
 
     <!-- ============ New direct chat ============ -->
     <dialog id="peopleDlg" aria-labelledby="peopleTitle">
@@ -712,572 +761,11 @@
     </dialog>
 
     <script src="/socket.io/socket.io.js"></script>
-    <script>
-      const MAX_FILES = 20; // no size limit (LAN)
-
-      const $ = (id) => document.getElementById(id);
-      const appEl = $("app"), chatEl = $("chat"), feed = $("feed"), list = $("messages");
-      const input = $("msg"), sendBtn = $("send"), statusEl = $("status");
-      const fileInput = $("fileInput"), pendingEl = $("pending");
-
-      const inks = ["#2f5d8a", "#7a3e6c", "#2e6b5a", "#8a5a1f", "#4b4f9c", "#9a3b3b", "#3d6e7e", "#6b5b2e"];
-      const inkFor = (name = "") => {
-        let h = 0;
-        for (const c of name) h = (h * 31 + c.charCodeAt(0)) >>> 0;
-        return inks[h % inks.length];
-      };
-
-      const fmtSize = (b) =>
-        b < 1024 ? `${b} B` : b < 1048576 ? `${(b / 1024).toFixed(0)} KB` : `${(b / 1048576).toFixed(1)} MB`;
-
-      const el = (tag, props = {}, ...kids) => {
-        const n = Object.assign(document.createElement(tag), props);
-        kids.flat().forEach((k) => k != null && n.append(k));
-        return n;
-      };
-
-      const svgUse = (id, cls) => {
-        const s = document.createElementNS("http://www.w3.org/2000/svg", "svg");
-        if (cls) s.setAttribute("class", cls);
-        s.setAttribute("aria-hidden", "true");
-        s.setAttribute("fill", "currentColor");
-        const u = document.createElementNS("http://www.w3.org/2000/svg", "use");
-        u.setAttribute("href", "#" + id);
-        s.append(u);
-        return s;
-      };
-
-      // Initials on the person's colour, with their picture on top if they have one
-      const userAvatar = (name, image, cls = "") => {
-        const a = el("div", { className: ("avatar " + cls).trim() }, (name || "?")[0].toUpperCase());
-        a.style.background = inkFor(name);
-        if (image) {
-          const img = el("img", { src: image, alt: "" });
-          img.onerror = () => img.remove();
-          a.append(img);
-        }
-        return a;
-      };
-
-      const avatarFor = (c) => {
-        if (c.type === "room") return el("div", { className: "avatar room" }, svgUse("dove"));
-        return userAvatar(c.name, c.image);
-      };
-
-      const shortTime = (iso) => {
-        if (!iso) return "";
-        const d = new Date(iso);
-        return d.toDateString() === new Date().toDateString()
-          ? d.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })
-          : d.toLocaleDateString(undefined, { day: "numeric", month: "short" });
-      };
-
-      const dayLabel = (d) => {
-        const y = new Date();
-        y.setDate(y.getDate() - 1);
-        if (d.toDateString() === new Date().toDateString()) return "Today";
-        if (d.toDateString() === y.toDateString()) return "Yesterday";
-        return d.toLocaleDateString(undefined, { weekday: "long", day: "numeric", month: "long", year: "numeric" });
-      };
-
-      // ---------------- state ----------------
-      let me = null;
-      let settings = {};
-      let conversations = [];
-      let activeId = null;
-      const unread = {};
-      let pendingFiles = [];
-      let lastSender = null, lastDay = null;
-
-      // ---------------- sidebar ----------------
-      function renderSidebar() {
-        const rooms = $("rooms"), directs = $("directs");
-        rooms.replaceChildren();
-        directs.replaceChildren();
-
-        for (const c of conversations) {
-          const preview =
-            c.last_message ||
-            (c.last_has_attachments ? "Sent an attachment" : c.type === "direct" ? "Say hello" : "No messages yet");
-          const who = c.type === "room" && c.last_sender && c.last_message ? `${c.last_sender}: ` : "";
-          const btn = el(
-            "button",
-            { className: "convo", type: "button", onclick: () => openConversation(c.id) },
-            avatarFor(c),
-            el("span", { className: "meta" },
-              el("span", { className: "name" }, c.name),
-              el("span", { className: "preview" }, who + preview)),
-            el("span", { className: "side" },
-              el("span", { className: "when" }, shortTime(c.last_activity)),
-              unread[c.id] ? el("span", { className: "badge", ariaLabel: `${unread[c.id]} unread` }, String(unread[c.id])) : null),
-          );
-          if (c.id === activeId) btn.setAttribute("aria-current", "true");
-          (c.type === "room" ? rooms : directs).append(btn);
-        }
-
-        if (!directs.children.length) {
-          directs.append(el("p", { className: "hint" }, "Private chats appear here. Use New to message someone."));
-        }
-      }
-
-      async function loadConversations() {
-        conversations = await (await fetch("/api/conversations")).json();
-        renderSidebar();
-      }
-
-      // ---------------- messages ----------------
-      function renderAttachment(a) {
-        if (/^image\/(png|jpe?g|gif|webp|avif|bmp)$/.test(a.mime_type)) {
-          const img = el("img", { src: a.url, alt: a.file_name });
-          const link = el("a", { className: "shot", href: a.url, target: "_blank", rel: "noopener", title: a.file_name }, img);
-          img.onerror = () => link.replaceWith(fileCard(a)); // unreadable image -> plain download
-          return link;
-        }
-        return fileCard(a);
-      }
-
-      function fileCard(a) {
-        return el("a", { className: "file", href: a.url + "?download=1", title: `Download ${a.file_name}` },
-          svgUse("doc"),
-          el("span", {}, el("span", { className: "fname" }, a.file_name), el("span", { className: "fsize" }, fmtSize(Number(a.size_bytes)))));
-      }
-
-      function appendMessage(m, fresh) {
-        const empty = list.querySelector(".empty");
-        if (empty) empty.remove();
-
-        const sender = m.sender || "User";
-        const when = new Date(m.timestamp);
-
-        if (when.toDateString() !== lastDay) {
-          list.append(el("div", { className: "day" }, dayLabel(when)));
-          lastDay = when.toDateString();
-          lastSender = null;
-        }
-
-        const row = el("div", { className: "msg" });
-        const mine = me && (m.sender_id ? m.sender_id === me.id : sender === me.username);
-        if (mine) row.classList.add("mine");
-        if (sender === lastSender) row.classList.add("cont");
-        if (fresh) row.classList.add("fresh");
-
-        const from = el("div", { className: "from" }, sender);
-        from.style.color = inkFor(sender);
-        if (m.sender_id) from.dataset.uid = m.sender_id;
-        // in rooms, other people's messages get their picture next to the first bubble
-        const room = conversations.find((x) => x.id === m.conversation_id)?.type === "room";
-        if (room && !mine) {
-          row.classList.add("has-av");
-          if (sender !== lastSender) {
-            const av = userAvatar(sender, m.sender_image, "sm mav");
-            if (m.sender_id) av.dataset.uid = m.sender_id;
-            row.append(av);
-          }
-        }
-
-        const bubble = el("div", { className: "bubble" });
-        if (m.attachments && m.attachments.length) {
-          bubble.append(el("div", { className: "files" }, m.attachments.map(renderAttachment)));
-        }
-        const time = el("time", { dateTime: when.toISOString() }, when.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" }));
-        if (m.message) {
-          // text only, never HTML
-          bubble.append(el("div", { className: "text" }, m.message, el("span", { className: "stamp-space", ariaHidden: "true" }, time.textContent), time));
-        }
-        else bubble.append(time);
-
-        row.append(from, bubble);
-        list.append(row);
-        lastSender = sender;
-      }
-
-      // Keep the view pinned to the newest message unless the user scrolled up to read
-      let stick = true;
-      const scrollDown = () => { feed.scrollTop = feed.scrollHeight; stick = true; };
-      feed.addEventListener("scroll", () => {
-        stick = feed.scrollHeight - feed.scrollTop - feed.clientHeight < 80;
-      });
-      // Images/fonts finishing loading grow the list after we scrolled; follow it down
-      new ResizeObserver(() => stick && (feed.scrollTop = feed.scrollHeight)).observe(list);
-
-      async function openConversation(id) {
-        window.sandesCrackers?.reset();
-        activeId = id;
-        window.sandesBoard?.switchTo(id);
-        unread[id] = 0;
-        const c = conversations.find((x) => x.id === id);
-        appEl.classList.add("in-chat");
-        chatEl.classList.toggle("direct", c.type === "direct");
-        $("chatTitle").textContent = c.name;
-        $("chatSub").textContent = c.type === "room" ? "Everyone can read messages here" : "Private chat";
-        $("chatAvatar").replaceChildren(avatarFor(c));
-        renderSidebar();
-        syncComposer();
-
-        list.replaceChildren();
-        lastSender = lastDay = null;
-        const res = await fetch(`/api/conversations/${id}/messages`);
-        if (activeId !== id) return; // user switched while loading
-        const msgs = res.ok ? await res.json() : [];
-        if (!msgs.length) {
-          list.append(el("p", { className: "empty" },
-            c.type === "room" ? "No messages yet. Write the first one below." : `This is the start of your private chat with ${c.name}.`));
-        }
-        msgs.forEach((m) => appendMessage(m, false));
-        scrollDown();
-        if (matchMedia("(min-width: 761px)").matches) input.focus();
-      }
-
-      $("back").onclick = () => {
-        window.sandesCrackers?.reset();
-        appEl.classList.remove("in-chat");
-        activeId = null;
-        window.sandesBoard?.switchTo(null);
-        renderSidebar();
-      };
-
-      // ---------------- realtime ----------------
-      const socket = io();
-
-      socket.on("message", async (m) => {
-        let c = conversations.find((x) => x.id === m.conversation_id);
-        if (!c) {
-          await loadConversations(); // someone started a new chat with you
-          c = conversations.find((x) => x.id === m.conversation_id);
-          if (!c) return;
-        }
-        c.last_message = m.message;
-        c.last_has_attachments = (m.attachments || []).length > 0;
-        c.last_sender = m.sender;
-        c.last_activity = m.timestamp;
-        conversations = [
-          ...conversations.filter((x) => x.type === "room"),
-          ...conversations.filter((x) => x.type !== "room").sort((a, b) => new Date(b.last_activity) - new Date(a.last_activity)),
-        ];
-
-        if (m.conversation_id === activeId) {
-          appendMessage(m, true);
-          if (stick || m.sender_id === me?.id) scrollDown();
-        } else if (m.sender_id !== me?.id) {
-          unread[m.conversation_id] = (unread[m.conversation_id] || 0) + 1;
-        }
-        renderSidebar();
-      });
-
-      socket.on("connect", () => { statusEl.textContent = ""; syncComposer(); });
-      socket.on("disconnect", () => { statusEl.textContent = "Connection lost. Reconnecting…"; syncComposer(); });
-      socket.on("connect_error", (err) => {
-        if (err && err.message === "Account turned off") return (location.href = "/login?error=inactive");
-        statusEl.textContent = "Can't reach the server. Retrying…";
-      });
-
-      // ---------------- account + settings ----------------
-      socket.on("settings", applySettings);
-      socket.on("account:disabled", () => (location.href = "/login?error=inactive"));
-      socket.on("profile", (p) => { me = { ...me, ...p }; renderMe(); syncProfile(); });
-      socket.on("user:updated", async (u) => {
-        if (me && u.id === me.id) { me.username = u.username; me.image = u.image; renderMe(); }
-        document.querySelectorAll(`.from[data-uid="${u.id}"]`).forEach((n) => (n.textContent = u.username));
-        document.querySelectorAll(`.mav[data-uid="${u.id}"]`).forEach((n) => {
-          const av = userAvatar(u.username, u.image, "sm mav");
-          av.dataset.uid = u.id;
-          n.replaceWith(av);
-        });
-        await loadConversations();
-        const c = conversations.find((x) => x.id === activeId);
-        if (c && c.type === "direct" && c.other_user_id === u.id) {
-          $("chatTitle").textContent = c.name;
-          $("chatAvatar").replaceChildren(avatarFor(c));
-        }
-      });
-
-      function applySettings(s) {
-        settings = window.sandesSettings = s;
-        window.sandesCrackers?.setEnabled(s.crackers_enabled);
-        window.sandesBoard?.setEnabled(s.board_enabled);
-        $("attachBtn").hidden = !s.attachments_enabled;
-        if (!s.attachments_enabled && pendingFiles.length) { pendingFiles = []; renderPending(); }
-        $("newChat").hidden = !s.direct_messages_enabled;
-        syncComposer();
-        syncProfile();
-      }
-
-      // Direct chats are read-only while the admin has direct messages turned off
-      function syncComposer() {
-        const c = conversations.find((x) => x.id === activeId);
-        const off = !!c && c.type === "direct" && settings.direct_messages_enabled === false;
-        input.disabled = off;
-        input.placeholder = off ? "Direct messages are turned off by the admin" : "Write a message";
-        sendBtn.disabled = off || !socket.connected;
-      }
-
-      function renderMe() {
-        if (!me) return;
-        $("me").textContent = me.username;
-        $("meAvatar").replaceChildren(userAvatar(me.username, me.image, "sm"));
-        $("meSub").textContent = me.role === "admin" ? "Admin · your profile" : "Your profile";
-        $("adminLink").hidden = me.role !== "admin";
-      }
-
-      async function api(method, url, body) {
-        const opts = { method, headers: {} };
-        if (body instanceof FormData) opts.body = body;
-        else if (body) { opts.headers["Content-Type"] = "application/json"; opts.body = JSON.stringify(body); }
-        const r = await fetch(url, opts);
-        let data = {};
-        try { data = await r.json(); } catch {}
-        if (!r.ok) throw new Error(data.message || "Something went wrong. Try again.");
-        return data;
-      }
-
-      // Crop to the middle square and shrink to 256px, so pictures are small and look the same everywhere
-      async function squarePicture(file, size = 256) {
-        const url = URL.createObjectURL(file);
-        try {
-          const img = await new Promise((resolve, reject) => {
-            const i = new Image();
-            i.onload = () => resolve(i);
-            i.onerror = () => reject(new Error("That file isn't a picture this browser can read"));
-            i.src = url;
-          });
-          const s = Math.min(img.naturalWidth, img.naturalHeight);
-          const c = document.createElement("canvas");
-          c.width = c.height = size;
-          c.getContext("2d").drawImage(img, (img.naturalWidth - s) / 2, (img.naturalHeight - s) / 2, s, s, 0, 0, size, size);
-          return await new Promise((resolve) => c.toBlob(resolve, "image/webp", 0.9));
-        } finally {
-          URL.revokeObjectURL(url);
-        }
-      }
-
-      // ---------------- profile dialog ----------------
-      const pdlg = $("profileDlg");
-      const say = (id, text, kind = "") => { const n = $(id); n.textContent = text; n.className = "pf-msg " + kind; };
-
-      function syncProfile() {
-        if (!me) return;
-        const admin = me.role === "admin";
-        const canName = admin || settings.users_can_change_username !== false;
-        const canPic = admin || settings.users_can_change_picture !== false;
-        $("pfAvatar").replaceChildren(userAvatar(me.username, me.image, "lg"));
-        $("pfName").textContent = me.username;
-        $("pfUid").textContent = me.user_id || "";
-        $("pfRole").textContent = admin ? "Admin" : "Member";
-        $("pfPassUser").value = me.username;
-        $("pfUsername").disabled = $("pfNameSave").disabled = !canName;
-        $("pfNameNote").textContent = canName
-          ? "You can sign in with your username or your user ID."
-          : "Changing usernames is turned off by the admin.";
-        $("pfPick").hidden = !canPic;
-        $("pfRemove").hidden = !canPic || !me.image;
-        if (!canPic) say("pfPicMsg", "Changing pictures is turned off by the admin.");
-        else if ($("pfPicMsg").textContent.includes("turned off")) say("pfPicMsg", "");
-      }
-
-      $("meBtn").onclick = () => {
-        ["pfPicMsg", "pfNameMsg", "pfPassMsg"].forEach((id) => say(id, ""));
-        $("pfPassForm").reset();
-        $("pfUsername").value = me.username;
-        syncProfile();
-        pdlg.showModal();
-      };
-      $("closeProfile").onclick = () => pdlg.close();
-      pdlg.addEventListener("click", (e) => { if (e.target === pdlg) pdlg.close(); });
-
-      $("pfFile").onchange = async () => {
-        const file = $("pfFile").files[0];
-        $("pfFile").value = "";
-        if (!file) return;
-        say("pfPicMsg", "Uploading…");
-        try {
-          const blob = await squarePicture(file);
-          const fd = new FormData();
-          fd.append("image", blob, blob.type === "image/webp" ? "avatar.webp" : "avatar.png");
-          me = { ...me, ...(await api("POST", "/api/profile/image", fd)) };
-          renderMe();
-          syncProfile();
-          say("pfPicMsg", "Picture updated", "ok");
-        } catch (err) {
-          say("pfPicMsg", err.message, "err");
-        }
-      };
-
-      $("pfRemove").onclick = async () => {
-        try {
-          me = { ...me, ...(await api("DELETE", "/api/profile/image")) };
-          renderMe();
-          syncProfile();
-          say("pfPicMsg", "Picture removed", "ok");
-        } catch (err) {
-          say("pfPicMsg", err.message, "err");
-        }
-      };
-
-      $("pfNameForm").addEventListener("submit", async (e) => {
-        e.preventDefault();
-        const username = $("pfUsername").value.trim();
-        if (username === me.username) return say("pfNameMsg", "That's already your username");
-        try {
-          me = { ...me, ...(await api("PUT", "/api/profile/username", { username })) };
-          renderMe();
-          syncProfile();
-          say("pfNameMsg", "Username changed. Use it the next time you sign in.", "ok");
-        } catch (err) {
-          say("pfNameMsg", err.message, "err");
-        }
-      });
-
-      $("pfPassForm").addEventListener("submit", async (e) => {
-        e.preventDefault();
-        if ($("pfNew").value !== $("pfNew2").value) return say("pfPassMsg", "The two new passwords don't match", "err");
-        try {
-          await api("PUT", "/api/profile/password", { current: $("pfCur").value, password: $("pfNew").value });
-          $("pfPassForm").reset();
-          say("pfPassMsg", "Password changed", "ok");
-        } catch (err) {
-          say("pfPassMsg", err.message, "err");
-        }
-      });
-      socket.on("error", (e) => { statusEl.textContent = typeof e === "string" ? e : "Message not sent. Try again."; });
-
-      // ---------------- attachments ----------------
-      function addFiles(files) {
-        statusEl.textContent = "";
-        if (settings.attachments_enabled === false) { statusEl.textContent = "Sending files is turned off by the admin."; return; }
-        for (const f of files) {
-          if (pendingFiles.length >= MAX_FILES) { statusEl.textContent = `You can attach up to ${MAX_FILES} files at once.`; break; }
-          pendingFiles.push(f);
-        }
-        renderPending();
-      }
-
-      function renderPending() {
-        pendingEl.replaceChildren(
-          ...pendingFiles.map((f, i) =>
-            el("span", { className: "chip" },
-              el("span", {}, f.name),
-              el("small", {}, fmtSize(f.size)),
-              el("button", { type: "button", ariaLabel: `Remove ${f.name}`, onclick: () => { pendingFiles.splice(i, 1); renderPending(); } }, "×"))),
-        );
-      }
-
-      fileInput.onchange = () => { addFiles(fileInput.files); fileInput.value = ""; };
-
-      let dragDepth = 0;
-      chatEl.addEventListener("dragenter", (e) => { if (e.dataTransfer.types.includes("Files")) { dragDepth++; chatEl.classList.add("dragging"); } });
-      chatEl.addEventListener("dragleave", () => { if (--dragDepth <= 0) { dragDepth = 0; chatEl.classList.remove("dragging"); } });
-      chatEl.addEventListener("dragover", (e) => e.preventDefault());
-      chatEl.addEventListener("drop", (e) => {
-        e.preventDefault(); dragDepth = 0; chatEl.classList.remove("dragging");
-        if (e.dataTransfer.files.length) addFiles(e.dataTransfer.files);
-      });
-      input.addEventListener("paste", (e) => { if (e.clipboardData.files.length) addFiles(e.clipboardData.files); });
-
-      // ---------------- send ----------------
-      $("composer").addEventListener("submit", async (e) => {
-        e.preventDefault();
-        if (!activeId) return;
-        const text = input.value.trim();
-        if (!text && !pendingFiles.length) return;
-        statusEl.textContent = "";
-
-        if (!pendingFiles.length) {
-          socket.emit("chat message", { conversationId: activeId, message: text });
-          input.value = "";
-          return;
-        }
-
-        const fd = new FormData();
-        fd.append("message", text);
-        pendingFiles.forEach((f) => fd.append("files", f));
-        sendBtn.disabled = true;
-        statusEl.style.color = "var(--slate)";
-        statusEl.textContent = pendingFiles.length === 1 ? "Sending 1 file…" : `Sending ${pendingFiles.length} files…`;
-        try {
-          const label = statusEl.textContent.replace("…", "");
-          await new Promise((resolve, reject) => {
-            const xhr = new XMLHttpRequest();
-            xhr.open("POST", `/api/conversations/${activeId}/messages`);
-            xhr.upload.onprogress = (ev) => {
-              if (ev.lengthComputable) statusEl.textContent = `${label}… ${Math.floor((ev.loaded / ev.total) * 100)}%`;
-            };
-            xhr.onload = () => {
-              if (xhr.status >= 200 && xhr.status < 300) return resolve();
-              let msg = "Message not sent. Try again.";
-              try { msg = JSON.parse(xhr.responseText).message || msg; } catch {}
-              reject(new Error(msg));
-            };
-            xhr.onerror = () => reject(new Error("Upload failed. Check the connection and try again."));
-            xhr.send(fd);
-          });
-          input.value = "";
-          pendingFiles = [];
-          renderPending();
-          statusEl.textContent = "";
-        } catch (err) {
-          statusEl.style.color = "";
-          statusEl.textContent = err.message;
-        } finally {
-          statusEl.style.color = "";
-          sendBtn.disabled = false;
-          input.focus();
-        }
-      });
-
-      // ---------------- new direct chat ----------------
-      const dlg = $("peopleDlg");
-      let people = [];
-
-      function renderPeople() {
-        const q = $("peopleSearch").value.trim().toLowerCase();
-        const shown = people.filter((p) => p.username.toLowerCase().includes(q));
-        $("people").replaceChildren(
-          ...(shown.length
-            ? shown.map((p) =>
-                el("button", { className: "person", type: "button", onclick: () => startDirect(p.id) },
-                  userAvatar(p.username, p.image), p.username))
-            : [el("p", { className: "hint" }, people.length ? "No one matches that name." : "No other users yet. Add users to the users table to chat with them.")]),
-        );
-      }
-
-      $("newChat").onclick = async () => {
-        people = await (await fetch("/api/users")).json();
-        $("peopleSearch").value = "";
-        renderPeople();
-        dlg.showModal();
-        $("peopleSearch").focus();
-      };
-      $("peopleSearch").oninput = renderPeople;
-      $("closeDlg").onclick = () => dlg.close();
-      dlg.addEventListener("click", (e) => { if (e.target === dlg) dlg.close(); });
-
-      async function startDirect(userId) {
-        const r = await fetch("/api/conversations/direct", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ userId }),
-        });
-        if (!r.ok) return;
-        const c = await r.json();
-        dlg.close();
-        await loadConversations();
-        openConversation(c.id);
-      }
-
-      // ---------------- boot ----------------
-      (async () => {
-        const r = await fetch("/me");
-        if (!r.ok) return (location.href = "/login");
-        const { settings: s, ...profile } = await r.json();
-        me = profile;
-        renderMe();
-        await loadConversations();
-        applySettings(s);
-        const main = conversations.find((c) => c.slug === "main") || conversations[0];
-        if (main && matchMedia("(min-width: 761px)").matches) openConversation(main.id);
-      })();
-    </script>
+    <script src="/chat.js"></script>
     <script src="/crackers.js"></script>
     <script src="/board.js"></script>
+    <script src="/panels.js"></script>
+    <script src="/themes.js"></script>
+    <script src="/effects.js"></script>
   </body>
 </html>

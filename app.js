@@ -100,12 +100,21 @@ async function nameTaken(value, exceptId = 0) {
 const SETTING_KEYS = [
     "crackers_enabled", "board_enabled", "attachments_enabled",
     "direct_messages_enabled", "users_can_change_username", "users_can_change_picture",
+    "message_effects_enabled", "users_can_create_groups", "festival_theme",
 ];
-const settings = Object.fromEntries(SETTING_KEYS.map((k) => [k, true]));
+// Settings that pick one of a few values (all the others are on/off)
+const SETTING_CHOICES = {
+    festival_theme: ["none", "diwali", "holi", "durga_puja", "christmas"],
+};
+const settings = Object.fromEntries(SETTING_KEYS.map((k) => [k, SETTING_CHOICES[k] ? SETTING_CHOICES[k][0] : true]));
+
+/** Is this a valid value for that setting? */
+const settingOk = (key, value) =>
+    SETTING_CHOICES[key] ? SETTING_CHOICES[key].includes(value) : typeof value === "boolean";
 
 async function loadSettings() {
     const { rows } = await pool.query("SELECT key, value FROM settings");
-    for (const r of rows) if (SETTING_KEYS.includes(r.key)) settings[r.key] = r.value === true;
+    for (const r of rows) if (SETTING_KEYS.includes(r.key) && settingOk(r.key, r.value)) settings[r.key] = r.value;
 }
 
 // ------------------------------------------------------------------
@@ -187,10 +196,29 @@ function userChanged(u) {
 let MAIN_ROOM_ID = null;
 
 // Names and pictures come from the users table, so a rename shows on old messages too
+// Each message also carries: the message it replies to, reactions, and its poll (if any)
 const MESSAGE_SELECT = `
-    SELECT m.id, m.conversation_id, COALESCE(u.username, m.sender) AS sender, m.sender_id, m.message,
+    SELECT m.id, m.conversation_id, COALESCE(u.username, m.sender) AS sender, m.sender_id,
+           CASE WHEN m.deleted_at IS NULL THEN m.message END AS message,
+           m.kind, m.effect, m.edited_at, m.deleted_at,
            CASE WHEN u.image IS NOT NULL THEN '/avatars/' || u.image END AS sender_image,
            m.created_at AS "timestamp",
+           (SELECT json_build_object(
+                       'id', r.id, 'sender', COALESCE(ru.username, r.sender), 'sender_id', r.sender_id,
+                       'message', CASE WHEN r.deleted_at IS NULL THEN left(r.message, 240) END,
+                       'kind', r.kind, 'deleted', r.deleted_at IS NOT NULL,
+                       'has_attachments', EXISTS (SELECT 1 FROM attachments ra WHERE ra.message_id = r.id))
+            FROM chat_messages r LEFT JOIN users ru ON ru.id = r.sender_id
+            WHERE r.id = m.reply_to) AS reply_to,
+           (SELECT COALESCE(json_agg(json_build_object('emoji', x.emoji, 'users', x.users) ORDER BY x.first), '[]')
+            FROM (SELECT emoji, json_agg(user_id ORDER BY created_at) AS users, min(created_at) AS first
+                  FROM message_reactions WHERE message_id = m.id GROUP BY emoji) x) AS reactions,
+           (SELECT json_build_object(
+                       'question', p.question, 'options', p.options, 'multi', p.multi,
+                       'closed', p.closed_at IS NOT NULL,
+                       'votes', (SELECT COALESCE(json_agg(json_build_object('user_id', v.user_id, 'option', v.option_index)), '[]')
+                                 FROM poll_votes v WHERE v.message_id = p.message_id))
+            FROM polls p WHERE p.message_id = m.id) AS poll,
            COALESCE(
                json_agg(json_build_object(
                    'id', a.id, 'file_name', a.file_name,
@@ -208,13 +236,35 @@ async function getMessage(id) {
     return rows[0];
 }
 
-async function getHistory(conversationId, limit = 200) {
+/**
+ * Messages of a conversation, oldest first.
+ *   default      -> the latest `limit`
+ *   { before }   -> `limit` older than that message id (scrolling up)
+ *   { from }     -> 30 before that id and everything after it (jump to a search result)
+ */
+async function getHistory(conversationId, { limit = 200, before = null, from = null } = {}) {
+    if (from) {
+        const { rows } = await pool.query(
+            `SELECT * FROM (
+                 ${MESSAGE_SELECT} WHERE m.conversation_id = $1 AND m.id < $2
+                 GROUP BY m.id, u.id ORDER BY m.id DESC LIMIT 30
+             ) older
+             UNION ALL
+             SELECT * FROM (
+                 ${MESSAGE_SELECT} WHERE m.conversation_id = $1 AND m.id >= $2
+                 GROUP BY m.id, u.id ORDER BY m.id ASC LIMIT 2000
+             ) newer
+             ORDER BY id ASC`,
+            [conversationId, from],
+        );
+        return rows;
+    }
     const { rows } = await pool.query(
         `SELECT * FROM (
-             ${MESSAGE_SELECT} WHERE m.conversation_id = $1
-             GROUP BY m.id, u.id ORDER BY m.created_at DESC LIMIT $2
-         ) t ORDER BY "timestamp" ASC`,
-        [conversationId, limit],
+             ${MESSAGE_SELECT} WHERE m.conversation_id = $1 ${before ? "AND m.id < $3" : ""}
+             GROUP BY m.id, u.id ORDER BY m.id DESC LIMIT $2
+         ) t ORDER BY id ASC`,
+        before ? [conversationId, limit, before] : [conversationId, limit],
     );
     return rows;
 }
@@ -237,6 +287,25 @@ async function accessType(userId, conversationId) {
         [conversationId, userId],
     );
     return rows[0] ? rows[0].type : null;
+}
+
+/**
+ * Can this user write in the conversation? Returns { type } or { error }.
+ * Main room: everyone. Groups/channels/direct: members only (public channels: join first).
+ */
+async function postAccess(userId, conversationId) {
+    if (!Number.isInteger(conversationId)) return { error: "You're not part of this conversation" };
+    const { rows } = await pool.query(
+        `SELECT c.type, c.slug, c.is_public,
+                EXISTS (SELECT 1 FROM conversation_members cm
+                        WHERE cm.conversation_id = c.id AND cm.user_id = $2) AS member
+         FROM conversations c WHERE c.id = $1`,
+        [conversationId, userId],
+    );
+    const c = rows[0];
+    if (!c) return { error: "You're not part of this conversation" };
+    if (c.slug === "main" || c.member) return { type: c.type };
+    return { error: c.is_public ? "Join this channel to write in it" : "You're not part of this conversation" };
 }
 
 /** Why this user can't post here right now (settings), or null if they can */
@@ -268,16 +337,69 @@ async function signIn(login, password) {
     return { user: u };
 }
 
-/** Save a message (+ optional uploaded files) and broadcast it. */
-async function createMessage({ conversationId, user, senderName, text, files = [] }) {
+const EFFECTS = ["confetti", "rangoli", "hearts", "petals"];
+const MENTION_RE = /@([\p{L}\p{N}._-]{2,40})/gu;
+
+/**
+ * Store @mentions of people who can see this conversation. "@all" mentions every member.
+ * Returns the ids of the people mentioned (never the sender).
+ */
+async function saveMentions(db, messageId, conversationId, text, senderId) {
+    const names = [...new Set([...(text || "").matchAll(MENTION_RE)].map((m) => m[1].toLowerCase()))];
+    if (!names.length) return [];
+    const all = names.includes("all");
+    const { rows } = await db.query(
+        `SELECT u.id FROM users u, conversations c
+         WHERE c.id = $1 AND u.status = 'active' AND u.id <> $3
+           AND ($4 OR lower(u.username) = ANY($2))
+           AND (c.slug = 'main' OR EXISTS (SELECT 1 FROM conversation_members cm
+                                           WHERE cm.conversation_id = c.id AND cm.user_id = u.id))`,
+        [conversationId, names, senderId, all],
+    );
+    const ids = rows.map((r) => r.id);
+    if (ids.length) {
+        await db.query(
+            `INSERT INTO message_mentions (message_id, user_id) SELECT $1, unnest($2::int[]) ON CONFLICT DO NOTHING`,
+            [messageId, ids],
+        );
+    }
+    return ids;
+}
+
+/** You've obviously read what you just sent: move your read marker and tell the chat */
+async function markRead(userId, conversationId, messageId) {
+    const { rows } = await pool.query(
+        `INSERT INTO conversation_reads (conversation_id, user_id, last_read_id, updated_at)
+         VALUES ($1, $2, $3, NOW())
+         ON CONFLICT (conversation_id, user_id) DO UPDATE
+             SET last_read_id = GREATEST(conversation_reads.last_read_id, EXCLUDED.last_read_id), updated_at = NOW()
+         RETURNING last_read_id`,
+        [conversationId, userId, messageId],
+    );
+    io.to(`conv:${conversationId}`).emit("read", { conversationId, userId, lastReadId: rows[0].last_read_id });
+    return rows[0].last_read_id;
+}
+
+/**
+ * Save a message (+ optional uploaded files, reply, poll, effect) and broadcast it.
+ *   kind 'system' messages are short notes like "priya added rahul"
+ */
+async function createMessage({ conversationId, user, text, files = [], replyTo = null, kind = "text", effect = null, poll = null }) {
     const client = await pool.connect();
-    let messageId;
+    let messageId, mentioned = [];
     try {
         await client.query("BEGIN");
+        // a reply must point at a message in the same conversation
+        let reply = null;
+        if (replyTo) {
+            const r = await client.query("SELECT id FROM chat_messages WHERE id = $1 AND conversation_id = $2", [replyTo, conversationId]);
+            reply = r.rows[0] ? r.rows[0].id : null;
+        }
+        const fx = effect && EFFECTS.includes(effect) && settings.message_effects_enabled ? effect : null;
         const { rows } = await client.query(
-            `INSERT INTO chat_messages (conversation_id, sender, sender_id, message)
-             VALUES ($1, $2, $3, $4) RETURNING id`,
-            [conversationId, senderName || user.username, user.id, text || null],
+            `INSERT INTO chat_messages (conversation_id, sender, sender_id, message, kind, reply_to, effect)
+             VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id`,
+            [conversationId, user.username, user.id, text || null, kind, reply, fx],
         );
         messageId = rows[0].id;
         for (const f of files) {
@@ -287,6 +409,13 @@ async function createMessage({ conversationId, user, senderName, text, files = [
                 [messageId, f.originalname, f.filename, f.mimetype || "application/octet-stream", f.size],
             );
         }
+        if (poll) {
+            await client.query(
+                "INSERT INTO polls (message_id, question, options, multi) VALUES ($1, $2, $3, $4)",
+                [messageId, poll.question, JSON.stringify(poll.options), !!poll.multi],
+            );
+        }
+        if (kind !== "system") mentioned = await saveMentions(client, messageId, conversationId, text, user.id);
         await client.query("COMMIT");
     } catch (err) {
         await client.query("ROLLBACK");
@@ -298,7 +427,11 @@ async function createMessage({ conversationId, user, senderName, text, files = [
     const msg = await getMessage(messageId);
     io.to(`conv:${conversationId}`).emit("message", msg);
     // Legacy event for older clients (mobile app) that only know the main room
-    if (conversationId === MAIN_ROOM_ID) io.emit("chat message", msg);
+    if (conversationId === MAIN_ROOM_ID && kind === "text") io.emit("chat message", msg);
+    for (const uid of mentioned) {
+        for (const s of socketsOf(uid)) s.emit("mention", { conversationId, message: msg });
+    }
+    if (kind !== "system") await markRead(user.id, conversationId, messageId);
     return msg;
 }
 
@@ -377,11 +510,19 @@ app.get("/avatars/:file", requireUser, (req, res) => {
 });
 
 /** Store an uploaded picture for a user (replacing the old one). Returns the updated user. */
-async function setAvatar(userId, file) {
+/** Save an uploaded picture into uploads/avatars. Returns { name } or { error } */
+async function saveAvatarFile(file) {
     const kind = file && imageKind(file.buffer);
     if (!kind) return { error: "Choose a PNG, JPG, GIF or WebP picture" };
     const name = `${crypto.randomUUID()}.${kind}`;
     await fs.promises.writeFile(path.join(AVATAR_DIR, name), file.buffer);
+    return { name };
+}
+
+async function setAvatar(userId, file) {
+    const saved = await saveAvatarFile(file);
+    if (saved.error) return saved;
+    const name = saved.name;
     const old = await loadUser(userId);
     await pool.query("UPDATE users SET image = $1, updated_at = NOW() WHERE id = $2", [name, userId]);
     removeAvatarFile(old && old.image);
@@ -588,7 +729,7 @@ app.delete("/api/admin/users/:id/image", requireAdmin, async (req, res) => {
 app.get("/api/admin/settings", requireAdmin, (req, res) => res.json(settings));
 
 app.put("/api/admin/settings", requireAdmin, async (req, res) => {
-    const changes = Object.entries(req.body || {}).filter(([k, v]) => SETTING_KEYS.includes(k) && typeof v === "boolean");
+    const changes = Object.entries(req.body || {}).filter(([k, v]) => SETTING_KEYS.includes(k) && settingOk(k, v));
     if (!changes.length) return res.status(400).json({ message: "Nothing to change" });
     for (const [key, value] of changes) {
         await pool.query(
@@ -616,20 +757,36 @@ app.get("/api/users", requireUser, async (req, res) => {
     res.json(rows.map((u) => ({ id: u.id, username: u.username, image: avatarUrl(u.image) })));
 });
 
-// Main room + your direct chats, most recent first
-app.get("/api/conversations", requireUser, async (req, res) => {
-    const me = req.session.user.id;
+// Main room + your groups, channels and direct chats, with unread counts
+async function listConversations(userId, onlyId = null) {
     const { rows } = await pool.query(
-        `SELECT c.id, c.type,
+        `SELECT c.id, c.type, c.slug, c.is_public, c.description,
                 CASE WHEN c.type = 'direct' THEN other.username ELSE c.name END AS name,
                 other.id AS other_user_id,
-                CASE WHEN other.image IS NOT NULL THEN '/avatars/' || other.image END AS image,
-                c.slug,
+                CASE WHEN c.type = 'direct' THEN
+                         CASE WHEN other.image IS NOT NULL THEN '/avatars/' || other.image END
+                     ELSE CASE WHEN c.image IS NOT NULL THEN '/avatars/' || c.image END
+                END AS image,
+                my.role AS my_role,
+                (SELECT count(*)::int FROM conversation_members cm2 WHERE cm2.conversation_id = c.id) AS member_count,
                 last.message AS last_message,
+                last.kind AS last_kind,
+                last.deleted AS last_deleted,
                 last.has_attachments AS last_has_attachments,
                 last.sender AS last_sender,
-                COALESCE(last.created_at, c.created_at) AS last_activity
+                COALESCE(last.created_at, c.created_at) AS last_activity,
+                COALESCE(r.last_read_id, 0) AS last_read_id,
+                (SELECT count(*)::int FROM chat_messages m
+                 WHERE m.conversation_id = c.id AND m.id > COALESCE(r.last_read_id, 0)
+                   AND m.created_at > me.created_at AND m.sender_id IS DISTINCT FROM $1
+                   AND m.deleted_at IS NULL AND m.kind <> 'system') AS unread,
+                EXISTS (SELECT 1 FROM message_mentions mm JOIN chat_messages m ON m.id = mm.message_id
+                        WHERE mm.user_id = $1 AND m.conversation_id = c.id
+                          AND m.id > COALESCE(r.last_read_id, 0) AND m.deleted_at IS NULL) AS mentioned
          FROM conversations c
+         JOIN users me ON me.id = $1
+         LEFT JOIN conversation_members my ON my.conversation_id = c.id AND my.user_id = $1
+         LEFT JOIN conversation_reads r ON r.conversation_id = c.id AND r.user_id = $1
          LEFT JOIN LATERAL (
              SELECT u.id, u.username, u.image FROM conversation_members cm
              JOIN users u ON u.id = cm.user_id
@@ -637,19 +794,23 @@ app.get("/api/conversations", requireUser, async (req, res) => {
              LIMIT 1
          ) other ON c.type = 'direct'
          LEFT JOIN LATERAL (
-             SELECT m.message, COALESCE(su.username, m.sender) AS sender, m.created_at,
+             SELECT CASE WHEN m.deleted_at IS NULL THEN m.message END AS message, m.kind,
+                    m.deleted_at IS NOT NULL AS deleted,
+                    COALESCE(su.username, m.sender) AS sender, m.created_at,
                     EXISTS (SELECT 1 FROM attachments a WHERE a.message_id = m.id) AS has_attachments
              FROM chat_messages m LEFT JOIN users su ON su.id = m.sender_id
              WHERE m.conversation_id = c.id
-             ORDER BY m.created_at DESC LIMIT 1
+             ORDER BY m.id DESC LIMIT 1
          ) last ON TRUE
-         WHERE c.is_public
-            OR EXISTS (SELECT 1 FROM conversation_members cm
-                       WHERE cm.conversation_id = c.id AND cm.user_id = $1)
+         WHERE (c.slug = 'main' OR my.user_id IS NOT NULL) ${onlyId ? "AND c.id = $2" : ""}
          ORDER BY (c.slug = 'main') DESC NULLS LAST, last_activity DESC`,
-        [me],
+        onlyId ? [userId, onlyId] : [userId],
     );
-    res.json(rows);
+    return rows;
+}
+
+app.get("/api/conversations", requireUser, async (req, res) => {
+    res.json(await listConversations(req.session.user.id));
 });
 
 // Open (or create) a direct chat with another user
@@ -691,6 +852,7 @@ app.post("/api/conversations/direct", requireUser, async (req, res) => {
     // Make both users' open sockets join the new chat
     io.in(`user:${me}`).socketsJoin(`conv:${conversationId}`);
     io.in(`user:${other}`).socketsJoin(`conv:${conversationId}`);
+    for (const s of socketsOf(other)) s.emit("conversations:changed");
 
     res.json({ id: conversationId, type: "direct", name: users[0].username, other_user_id: other, image: avatarUrl(users[0].image) });
 });
@@ -700,7 +862,9 @@ app.get("/api/conversations/:id/messages", requireUser, async (req, res) => {
     if (!(await canAccess(req.session.user.id, id))) {
         return res.status(403).json({ message: "You're not part of this conversation" });
     }
-    res.json(await getHistory(id));
+    const before = Number(req.query.before) || null;
+    const from = Number(req.query.from) || null;
+    res.json(await getHistory(id, { before, from }));
 });
 
 // Send a message with attachments (multipart/form-data: message, files[])
@@ -717,21 +881,29 @@ app.post("/api/conversations/:id/messages", requireUser, (req, res) => {
         }
         try {
             const id = Number(req.params.id);
-            const type = await accessType(req.session.user.id, id);
-            if (!type) {
+            const access = await postAccess(req.session.user.id, id);
+            if (access.error) {
                 removeFiles(files);
-                return res.status(403).json({ message: "You're not part of this conversation" });
+                return res.status(403).json({ message: access.error });
             }
-            const blocked = postBlocked(type, files.length > 0);
+            const blocked = postBlocked(access.type, files.length > 0);
             if (blocked) {
                 removeFiles(files);
                 return res.status(403).json({ message: blocked });
             }
             const text = (req.body.message || "").trim();
             if (!text && files.length === 0) {
+                removeFiles(files);
                 return res.status(400).json({ message: "Write a message or attach a file" });
             }
-            const msg = await createMessage({ conversationId: id, user: req.session.user, text, files });
+            if (text.length > 4000) {
+                removeFiles(files);
+                return res.status(400).json({ message: "That message is too long (4000 characters max)" });
+            }
+            const msg = await createMessage({
+                conversationId: id, user: req.session.user, text, files,
+                replyTo: Number(req.body.replyTo) || null, effect: req.body.effect || null,
+            });
             res.status(201).json(msg);
         } catch (e) {
             removeFiles(files);
@@ -857,28 +1029,36 @@ function registerCrackers(socket) {
 }
 
 // ------------------------------------------------------------------
-// Shared drawing board (one per conversation, saved in board_items).
-//   board:status {conversationId}        -> ack { viewers }      (is anyone on the board?)
-//   board:join   {conversationId}        -> ack { items, viewers }
+// Shared drawing board (one per conversation, saved in board_items, split into pages).
+//   board:status {conversationId}               -> ack { viewers }      (is anyone on the board?)
+//   board:join   {conversationId}               -> ack { pages, items, viewers }
 //   board:leave  {conversationId}
-//   board:add    {conversationId, item}  -> saved, sent to everyone on the board
-//   board:remove {conversationId, ids}   -> erased / undone
-//   board:clear  {conversationId}
-//   board:live   {conversationId, x, y, d} -> cursor + shape being drawn (not saved)
+//   board:add    {conversationId, item}         -> saved, sent to everyone on the board
+//   board:update {conversationId, item}         -> moved / resized / edited shape
+//   board:remove {conversationId, ids}          -> erased / undone
+//   board:clear  {conversationId, page}         -> wipes one page
+//   board:page:add / rename / delete            -> pages, broadcast as board:pages
+//   board:live   {conversationId, page, x, y, d} -> cursor + shape being drawn (not saved)
 //   board:presence {conversationId, viewers} goes to every member of the chat, so they
 //   can see the board is open. While anyone is on it, crackers are off in that chat.
 // ------------------------------------------------------------------
 const BOARD_W = 1600;
 const BOARD_H = 1000;
 const BOARD_MAX_ITEMS = 5000;
+const BOARD_MAX_PAGES = 20;
 const BOARD_ITEM_ID = /^[a-f0-9]{8,32}$/i;
-const BOARD_POINTS = { pen: [2, 8000], line: [4, 4], arrow: [4, 4], rect: [4, 4], ellipse: [4, 4], text: [2, 2] };
+const BOARD_POINTS = {
+    pen: [2, 8000], line: [4, 4], arrow: [4, 4], rect: [4, 4], ellipse: [4, 4], text: [2, 2],
+    sticky: [4, 4], shape: [4, 4],
+};
+// ready-made diagram shapes
+const BOARD_SHAPES = ["db", "server", "user", "cloud", "diamond", "doc", "laptop", "phone", "queue", "lock"];
 const boardViewers = new Map(); // conversation id -> Map(socket id -> username)
 
 const boardIsOn = (conversationId) => (boardViewers.get(conversationId)?.size || 0) > 0;
 const viewerNames = (conversationId) => [...new Set((boardViewers.get(conversationId) || new Map()).values())];
 
-function cleanBoardItem(it) {
+function cleanBoardItem(it, { draft = false } = {}) {
     if (!it || typeof it !== "object" || !BOARD_ITEM_ID.test(String(it.id))) return null;
     const range = BOARD_POINTS[it.t];
     if (!range || typeof it.c !== "string" || !/^#[0-9a-f]{6}$/i.test(it.c)) return null;
@@ -892,17 +1072,35 @@ function cleanBoardItem(it) {
         p.push(Math.round(Math.min(BOARD_W * 2, Math.max(-BOARD_W, n)) * 10) / 10);
     }
     const out = { t: it.t, c: it.c.toLowerCase(), w, p };
+    const page = Number(it.page);
+    if (Number.isInteger(page) && page > 0) out.page = page;
+    const text = typeof it.s === "string" ? it.s.replace(/\s+$/, "").slice(0, 1000) : "";
     if (it.t === "text") {
-        const s = typeof it.s === "string" ? it.s.trim().slice(0, 1000) : "";
-        if (!s) return null;
-        out.s = s;
+        if (!text.trim() && !draft) return null;
+        if (text) out.s = text;
     }
-    if ((it.t === "rect" || it.t === "ellipse") && it.f) out.f = true;
+    if ((it.t === "sticky" || it.t === "shape") && text) out.s = text;
+    if (it.t === "shape") {
+        if (!BOARD_SHAPES.includes(it.k)) return null;
+        out.k = it.k;
+    }
+    if ((it.t === "rect" || it.t === "ellipse" || it.t === "shape") && it.f) out.f = true;
     return { id: String(it.id), data: out };
 }
 
 function sendPresence(conversationId) {
     io.to(`conv:${conversationId}`).emit("board:presence", { conversationId, viewers: viewerNames(conversationId) });
+}
+
+async function boardPages(conversationId) {
+    let { rows } = await pool.query("SELECT id, name FROM board_pages WHERE conversation_id = $1 ORDER BY id", [conversationId]);
+    if (!rows.length) {
+        ({ rows } = await pool.query(
+            "INSERT INTO board_pages (conversation_id, name) VALUES ($1, 'Page 1') RETURNING id, name",
+            [conversationId],
+        ));
+    }
+    return rows;
 }
 
 const boardSessions = new Set(); // one "leave everything" function per connected socket
@@ -915,11 +1113,11 @@ function closeAllBoards() {
 function registerBoard(socket) {
     const user = socket.user;
     const joined = new Set(); // conversation ids this socket has the board open for
-    let bucket = 40, refill = Date.now(); // rate limit for saved changes
+    let bucket = 60, refill = Date.now(); // rate limit for saved changes
 
     const allow = () => {
         const t = Date.now();
-        bucket = Math.min(40, bucket + ((t - refill) / 1000) * 20);
+        bucket = Math.min(60, bucket + ((t - refill) / 1000) * 30);
         refill = t;
         if (bucket < 1) return false;
         bucket -= 1;
@@ -929,6 +1127,13 @@ function registerBoard(socket) {
     const onBoard = (d) => {
         const id = Number(d && d.conversationId);
         return joined.has(id) ? id : null;
+    };
+    const pageOf = async (conversationId, pageId) => {
+        const { rows } = await pool.query("SELECT id FROM board_pages WHERE id = $1 AND conversation_id = $2", [pageId, conversationId]);
+        return rows[0] ? rows[0].id : null;
+    };
+    const broadcastPages = async (id) => {
+        io.to(`board:${id}`).emit("board:pages", { conversationId: id, pages: await boardPages(id) });
     };
 
     function leave(conversationId) {
@@ -959,8 +1164,9 @@ function registerBoard(socket) {
             const id = Number(d && d.conversationId);
             if (!settings.board_enabled) return ack(cb, { error: "The board is turned off by the admin" });
             if (!(await canAccess(user.id, id))) return ack(cb, { error: "You're not part of this conversation" });
+            const pages = await boardPages(id);
             const { rows } = await pool.query(
-                `SELECT b.item_key AS id, b.data, u.username AS by
+                `SELECT b.item_key AS id, b.data, b.page_id, u.username AS by
                  FROM board_items b LEFT JOIN users u ON u.id = b.author_id
                  WHERE b.conversation_id = $1 ORDER BY b.id`,
                 [id],
@@ -969,7 +1175,11 @@ function registerBoard(socket) {
             socket.join(`board:${id}`);
             if (!boardViewers.has(id)) boardViewers.set(id, new Map());
             boardViewers.get(id).set(socket.id, user.username);
-            ack(cb, { items: rows.map((r) => ({ ...r.data, id: r.id, by: r.by })), viewers: viewerNames(id) });
+            ack(cb, {
+                pages,
+                items: rows.map((r) => ({ ...r.data, id: r.id, page: r.page_id || pages[0].id, by: r.by })),
+                viewers: viewerNames(id),
+            });
             sendPresence(id);
         } catch (err) {
             console.error("board:join", err);
@@ -985,18 +1195,46 @@ function registerBoard(socket) {
             if (id == null || !allow()) return ack(cb, { ok: false });
             const item = cleanBoardItem(d.item);
             if (!item) return ack(cb, { ok: false });
+            const page = await pageOf(id, item.data.page);
+            if (!page) return ack(cb, { ok: false, gone: true });
+            const { page: _p, ...data } = item.data;
             const { rowCount } = await pool.query(
-                `INSERT INTO board_items (conversation_id, item_key, author_id, data)
-                 SELECT $1, $2, $3, $4
+                `INSERT INTO board_items (conversation_id, item_key, author_id, data, page_id)
+                 SELECT $1, $2, $3, $4, $5
                  WHERE (SELECT count(*) FROM board_items WHERE conversation_id = $1) < ${BOARD_MAX_ITEMS}
                  ON CONFLICT (conversation_id, item_key) DO NOTHING`,
-                [id, item.id, user.id, item.data],
+                [id, item.id, user.id, data, page],
             );
             if (!rowCount) return ack(cb, { ok: false, full: true });
-            socket.to(`board:${id}`).emit("board:add", { conversationId: id, item: { ...item.data, id: item.id, by: user.username } });
+            socket.to(`board:${id}`).emit("board:add", { conversationId: id, item: { ...data, id: item.id, page, by: user.username } });
             ack(cb, { ok: true });
         } catch (err) {
             console.error("board:add", err);
+            ack(cb, { ok: false });
+        }
+    });
+
+    // Anyone on the board may move, resize or retype any shape (it's a shared whiteboard)
+    socket.on("board:update", async (d, cb) => {
+        try {
+            const id = onBoard(d);
+            if (id == null || !allow()) return ack(cb, { ok: false });
+            const item = cleanBoardItem(d.item);
+            if (!item) return ack(cb, { ok: false });
+            const { page: _p, ...data } = item.data;
+            const { rows } = await pool.query(
+                `UPDATE board_items SET data = $3, updated_at = NOW()
+                 WHERE conversation_id = $1 AND item_key = $2
+                 RETURNING page_id, (SELECT username FROM users WHERE id = author_id) AS by`,
+                [id, item.id, data],
+            );
+            if (!rows[0]) return ack(cb, { ok: false, gone: true });
+            socket.to(`board:${id}`).emit("board:update", {
+                conversationId: id, item: { ...data, id: item.id, page: rows[0].page_id, by: rows[0].by },
+            });
+            ack(cb, { ok: true });
+        } catch (err) {
+            console.error("board:update", err);
             ack(cb, { ok: false });
         }
     });
@@ -1018,10 +1256,61 @@ function registerBoard(socket) {
         try {
             const id = onBoard(d);
             if (id == null || !allow()) return;
-            await pool.query("DELETE FROM board_items WHERE conversation_id = $1", [id]);
-            socket.to(`board:${id}`).emit("board:clear", { conversationId: id, by: user.username });
+            const page = await pageOf(id, Number(d.page));
+            if (!page) return;
+            await pool.query("DELETE FROM board_items WHERE conversation_id = $1 AND page_id = $2", [id, page]);
+            socket.to(`board:${id}`).emit("board:clear", { conversationId: id, page, by: user.username });
         } catch (err) {
             console.error("board:clear", err);
+        }
+    });
+
+    const pageName = (n) => (typeof n === "string" ? n.trim().slice(0, 60) : "");
+
+    socket.on("board:page:add", async (d, cb) => {
+        try {
+            const id = onBoard(d);
+            if (id == null || !allow()) return ack(cb, { ok: false });
+            const pages = await boardPages(id);
+            if (pages.length >= BOARD_MAX_PAGES) return ack(cb, { ok: false, message: `A board can have up to ${BOARD_MAX_PAGES} pages` });
+            const { rows } = await pool.query(
+                "INSERT INTO board_pages (conversation_id, name) VALUES ($1, $2) RETURNING id, name",
+                [id, pageName(d.name) || `Page ${pages.length + 1}`],
+            );
+            await broadcastPages(id);
+            ack(cb, { ok: true, page: rows[0] });
+        } catch (err) {
+            console.error("board:page:add", err);
+            ack(cb, { ok: false });
+        }
+    });
+
+    socket.on("board:page:rename", async (d, cb) => {
+        try {
+            const id = onBoard(d);
+            const name = pageName(d && d.name);
+            if (id == null || !allow() || !name) return ack(cb, { ok: false });
+            await pool.query("UPDATE board_pages SET name = $3 WHERE id = $2 AND conversation_id = $1", [id, Number(d.page), name]);
+            await broadcastPages(id);
+            ack(cb, { ok: true });
+        } catch (err) {
+            console.error("board:page:rename", err);
+            ack(cb, { ok: false });
+        }
+    });
+
+    socket.on("board:page:delete", async (d, cb) => {
+        try {
+            const id = onBoard(d);
+            if (id == null || !allow()) return ack(cb, { ok: false });
+            const pages = await boardPages(id);
+            if (pages.length <= 1) return ack(cb, { ok: false, message: "A board needs at least one page" });
+            await pool.query("DELETE FROM board_pages WHERE id = $2 AND conversation_id = $1", [id, Number(d.page)]);
+            await broadcastPages(id);
+            ack(cb, { ok: true });
+        } catch (err) {
+            console.error("board:page:delete", err);
+            ack(cb, { ok: false });
         }
     });
 
@@ -1032,14 +1321,11 @@ function registerBoard(socket) {
         const x = Number(d.x), y = Number(d.y);
         let draft = null;
         if (d.d && typeof d.d === "object") {
-            const it = cleanBoardItem({ ...d.d, s: d.d.t === "text" ? "x" : d.d.s, p: d.d.p });
-            if (it) {
-                draft = { ...it.data, id: it.id, o: Math.max(0, Math.floor(Number(d.d.o) || 0)) };
-                if (draft.t === "text") delete draft.s;
-            }
+            const it = cleanBoardItem(d.d, { draft: true });
+            if (it) draft = { ...it.data, id: it.id, o: Math.max(0, Math.floor(Number(d.d.o) || 0)) };
         } else if (d.d === false) draft = false;
         socket.volatile.to(`board:${id}`).emit("board:live", {
-            conversationId: id, sid: socket.id, by: user.username,
+            conversationId: id, sid: socket.id, by: user.username, page: Number(d.page) || null,
             x: Number.isFinite(x) ? x : null, y: Number.isFinite(y) ? y : null, d: draft,
         });
     });
@@ -1057,6 +1343,16 @@ function registerBoard(socket) {
         for (const id of [...joined]) leave(id);
     });
 }
+
+// ------------------------------------------------------------------
+// Chat features: reactions, edits, receipts, typing, groups, pins, polls, tasks, notes, search
+// ------------------------------------------------------------------
+const features = require("./features")({
+    app, io, pool, settings, requireUser, requireAdmin, accessType, postAccess, postBlocked,
+    createMessage, getMessage, markRead, saveMentions, listConversations, socketsOf, userSockets,
+    readAvatar, saveAvatarFile, removeAvatarFile, avatarUrl, removeFiles, UPLOAD_DIR,
+    mainRoomId: () => MAIN_ROOM_ID,
+});
 
 // ------------------------------------------------------------------
 // Socket.io
@@ -1083,17 +1379,29 @@ io.use(async (socket, next) => {
 
 io.on("connection", async (socket) => {
     const user = socket.user;
-    if (!userSockets.has(user.id)) userSockets.set(user.id, new Set());
+    // Presence: online while at least one tab is connected
+    if (!userSockets.has(user.id)) {
+        userSockets.set(user.id, new Set());
+        io.emit("presence", { id: user.id, online: true });
+    }
     userSockets.get(user.id).add(socket);
-    socket.on("disconnect", () => {
+    socket.on("disconnect", async () => {
         const set = userSockets.get(user.id);
-        if (set) {
-            set.delete(socket);
-            if (!set.size) userSockets.delete(user.id);
+        if (!set) return;
+        set.delete(socket);
+        if (set.size) return;
+        userSockets.delete(user.id);
+        try {
+            const { rows } = await pool.query("UPDATE users SET last_seen = NOW() WHERE id = $1 RETURNING last_seen", [user.id]);
+            // a new tab may have connected while we were saving
+            if (!userSockets.has(user.id)) io.emit("presence", { id: user.id, online: false, last_seen: rows[0] && rows[0].last_seen });
+        } catch (err) {
+            console.error("presence", err);
         }
     });
     registerCrackers(socket);
     registerBoard(socket);
+    features.registerSocket(socket);
 
     // Rooms: personal room + main room + all your direct chats
     socket.join(`user:${user.id}`);
@@ -1116,12 +1424,17 @@ io.on("connection", async (socket) => {
             const text = (typeof data === "string" ? data : data && data.message) || "";
             if (!text.trim()) return;
             const conversationId = Number((data && data.conversationId) || MAIN_ROOM_ID);
-            const type = await accessType(user.id, conversationId);
-            if (!type) return socket.emit("error", "You're not part of this conversation");
-            const blocked = postBlocked(type, false);
+            const access = await postAccess(user.id, conversationId);
+            if (access.error) return socket.emit("error", access.error);
+            const blocked = postBlocked(access.type, false);
             if (blocked) return socket.emit("error", blocked);
+            if (text.length > 4000) return socket.emit("error", "That message is too long (4000 characters max)");
             // the name always comes from the account (legacy clients may send their own "sender")
-            await createMessage({ conversationId, user, text: text.trim() });
+            await createMessage({
+                conversationId, user, text: text.trim(),
+                replyTo: (data && Number(data.replyTo)) || null,
+                effect: (data && typeof data.effect === "string" && data.effect) || null,
+            });
         } catch (err) {
             console.error("Error saving message:", err);
             socket.emit("error", "Message not sent. Try again.");

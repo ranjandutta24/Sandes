@@ -263,6 +263,8 @@
       .set .d { margin-top: 2px; font-size: 0.875rem; color: var(--slate); line-height: 1.45; }
       .set .saved { font-size: 0.75rem; font-weight: 600; color: var(--green); opacity: 0; transition: opacity 200ms; }
       .set .saved.show { opacity: 1; }
+      .set-select { padding: 8px 12px; border: 1.5px solid var(--rule); border-radius: 12px; background: #fff; font-weight: 600; }
+      .set-select:focus { outline: none; border-color: var(--ink); }
 
       /* ---------- dialogs ---------- */
       dialog {
@@ -766,13 +768,19 @@
 
       // ---------------- settings ----------------
       const SETTINGS = [
+        ["Festival", [
+          ["festival_theme", "Festival theme", "Decorates the chat for everyone: garlands, colours and a gentle background animation (each person can pause the animation).",
+            [["none", "None"], ["diwali", "Diwali 🪔"], ["holi", "Holi 🎨"], ["durga_puja", "Durga Puja 🌺"], ["christmas", "Christmas 🎄"]]],
+        ]],
         ["Fun", [
           ["crackers_enabled", "Diwali crackers", "People can set off crackers in chats. Everyone in the chat sees and hears them."],
           ["board_enabled", "Shared drawing board", "A whiteboard in every chat for diagrams. Turning it off closes any board that's open."],
+          ["message_effects_enabled", "Message effects", "Send a message with confetti, rangoli, hearts or marigold petals that play for everyone in the chat."],
         ]],
         ["Chat", [
           ["attachments_enabled", "Send files", "Attach pictures and files to messages. Files already sent stay downloadable."],
           ["direct_messages_enabled", "Direct messages", "Private one-to-one chats. When off, nobody can start or write in them; old messages stay readable."],
+          ["users_can_create_groups", "Members can create groups and channels", "Admins can always create them."],
         ]],
         ["Profiles", [
           ["users_can_change_username", "Members can change their username", "Admins can always rename anyone from the Users tab."],
@@ -780,13 +788,40 @@
         ]],
       ];
 
+      // A setting that picks one of several values
+      function choiceSetting(key, choices, values) {
+        const sel = el("select", { className: "set-select", id: "set-" + key });
+        for (const [v, label] of choices) sel.append(el("option", { value: v, selected: values[key] === v }, label));
+        const saved = el("span", { className: "saved" }, "Saved");
+        sel.onchange = async () => {
+          sel.disabled = true;
+          try {
+            const next = await api("PUT", "/api/admin/settings", { [key]: sel.value });
+            sel.value = next[key];
+            saved.classList.add("show");
+            setTimeout(() => saved.classList.remove("show"), 1600);
+          } catch (err) {
+            sel.value = values[key];
+            toast(err.message, true);
+          } finally {
+            sel.disabled = false;
+          }
+        };
+        return [saved, sel];
+      }
+
       function renderSettings(values) {
         $("settingGroups").replaceChildren(
           ...SETTINGS.map(([title, items]) =>
             el("div", { className: "group" },
               el("h2", {}, title),
               el("div", { className: "card" },
-                items.map(([key, t, d]) => {
+                items.map(([key, t, d, choices]) => {
+                  if (choices) {
+                    return el("div", { className: "set" },
+                      el("label", { className: "txt", htmlFor: "set-" + key }, el("div", { className: "t" }, t), el("div", { className: "d" }, d)),
+                      ...choiceSetting(key, choices, values));
+                  }
                   const sw = el("input", { type: "checkbox", checked: !!values[key], id: "set-" + key });
                   const saved = el("span", { className: "saved" }, "Saved");
                   sw.onchange = async () => {

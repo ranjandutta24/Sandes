@@ -189,3 +189,150 @@ INSERT INTO sandes.settings (key, value) VALUES
     ('users_can_change_username', 'true'),  -- users rename themselves
     ('users_can_change_picture',  'true')   -- users set their own profile picture
 ON CONFLICT (key) DO NOTHING;
+
+-- ===============================================================
+-- Chat features: presence, replies/edits/deletes, reactions, read receipts,
+-- mentions, search, groups & channels, pins, polls, tasks, notes, board pages
+-- ===============================================================
+
+-- Last time each person was online (shown as "last seen ...")
+ALTER TABLE sandes.users ADD COLUMN IF NOT EXISTS last_seen TIMESTAMPTZ;
+
+-- Messages
+--   kind      -> 'text', 'poll' (see polls) or 'system' ("priya added rahul")
+--   reply_to  -> the message this one answers
+--   edited_at / deleted_at -> set when the sender edits or takes a message back
+--   effect    -> send effect played for everyone (confetti, rangoli, hearts, petals)
+--   search_doc -> full-text search index of the text ('simple' = works for any language)
+ALTER TABLE sandes.chat_messages ADD COLUMN IF NOT EXISTS kind VARCHAR(10) NOT NULL DEFAULT 'text'
+    CHECK (kind IN ('text', 'poll', 'system'));
+ALTER TABLE sandes.chat_messages ADD COLUMN IF NOT EXISTS reply_to INTEGER
+    REFERENCES sandes.chat_messages (id) ON DELETE SET NULL;
+ALTER TABLE sandes.chat_messages ADD COLUMN IF NOT EXISTS edited_at TIMESTAMPTZ;
+ALTER TABLE sandes.chat_messages ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ;
+ALTER TABLE sandes.chat_messages ADD COLUMN IF NOT EXISTS effect VARCHAR(20);
+ALTER TABLE sandes.chat_messages ADD COLUMN IF NOT EXISTS search_doc tsvector
+    GENERATED ALWAYS AS (to_tsvector('simple', coalesce(message, ''))) STORED;
+CREATE INDEX IF NOT EXISTS idx_chat_messages_search ON sandes.chat_messages USING gin (search_doc);
+
+-- Emoji reactions: one row per person per emoji
+CREATE TABLE IF NOT EXISTS sandes.message_reactions (
+    message_id  INTEGER     NOT NULL REFERENCES sandes.chat_messages (id) ON DELETE CASCADE,
+    user_id     INTEGER     NOT NULL REFERENCES sandes.users (id) ON DELETE CASCADE,
+    emoji       VARCHAR(16) NOT NULL,
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (message_id, user_id, emoji)
+);
+
+-- @mentions found in a message (for notifications and the "@" unread badge)
+CREATE TABLE IF NOT EXISTS sandes.message_mentions (
+    message_id  INTEGER NOT NULL REFERENCES sandes.chat_messages (id) ON DELETE CASCADE,
+    user_id     INTEGER NOT NULL REFERENCES sandes.users (id) ON DELETE CASCADE,
+    PRIMARY KEY (message_id, user_id)
+);
+CREATE INDEX IF NOT EXISTS idx_message_mentions_user ON sandes.message_mentions (user_id);
+
+-- Read receipts + unread counts: how far each person has read in each chat
+CREATE TABLE IF NOT EXISTS sandes.conversation_reads (
+    conversation_id  INTEGER     NOT NULL REFERENCES sandes.conversations (id) ON DELETE CASCADE,
+    user_id          INTEGER     NOT NULL REFERENCES sandes.users (id) ON DELETE CASCADE,
+    last_read_id     INTEGER     NOT NULL DEFAULT 0,
+    updated_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (conversation_id, user_id)
+);
+
+-- First upgrade only: everything that exists today counts as read
+INSERT INTO sandes.conversation_reads (conversation_id, user_id, last_read_id)
+SELECT c.id, u.id, COALESCE((SELECT max(m.id) FROM sandes.chat_messages m WHERE m.conversation_id = c.id), 0)
+FROM sandes.conversations c
+JOIN sandes.users u
+  ON c.is_public OR EXISTS (SELECT 1 FROM sandes.conversation_members cm
+                            WHERE cm.conversation_id = c.id AND cm.user_id = u.id)
+WHERE NOT EXISTS (SELECT 1 FROM sandes.conversation_reads)
+ON CONFLICT DO NOTHING;
+
+-- Groups & channels (type 'room'): description + picture, and who runs them
+--   is_public = TRUE -> channel anyone can find and join; FALSE -> private group
+ALTER TABLE sandes.conversations ADD COLUMN IF NOT EXISTS description VARCHAR(300);
+ALTER TABLE sandes.conversations ADD COLUMN IF NOT EXISTS image VARCHAR(255);
+ALTER TABLE sandes.conversation_members ADD COLUMN IF NOT EXISTS role VARCHAR(10) NOT NULL DEFAULT 'member'
+    CHECK (role IN ('owner', 'member'));
+
+-- Pinned messages, shown in a bar at the top of the chat
+CREATE TABLE IF NOT EXISTS sandes.pinned_messages (
+    conversation_id  INTEGER     NOT NULL REFERENCES sandes.conversations (id) ON DELETE CASCADE,
+    message_id       INTEGER     NOT NULL REFERENCES sandes.chat_messages (id) ON DELETE CASCADE,
+    pinned_by        INTEGER     REFERENCES sandes.users (id) ON DELETE SET NULL,
+    pinned_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (conversation_id, message_id)
+);
+
+-- Polls: the question is the message text; options are a JSON list of strings
+CREATE TABLE IF NOT EXISTS sandes.polls (
+    message_id  INTEGER     PRIMARY KEY REFERENCES sandes.chat_messages (id) ON DELETE CASCADE,
+    question    VARCHAR(300) NOT NULL,
+    options     JSONB       NOT NULL,
+    multi       BOOLEAN     NOT NULL DEFAULT FALSE,
+    closed_at   TIMESTAMPTZ
+);
+
+CREATE TABLE IF NOT EXISTS sandes.poll_votes (
+    message_id    INTEGER     NOT NULL REFERENCES sandes.polls (message_id) ON DELETE CASCADE,
+    user_id       INTEGER     NOT NULL REFERENCES sandes.users (id) ON DELETE CASCADE,
+    option_index  SMALLINT    NOT NULL,
+    voted_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (message_id, user_id, option_index)
+);
+
+-- Task list per chat (optionally made from a message, optionally assigned to someone)
+CREATE TABLE IF NOT EXISTS sandes.tasks (
+    id               SERIAL       PRIMARY KEY,
+    conversation_id  INTEGER      NOT NULL REFERENCES sandes.conversations (id) ON DELETE CASCADE,
+    message_id       INTEGER      REFERENCES sandes.chat_messages (id) ON DELETE SET NULL,
+    title            VARCHAR(500) NOT NULL,
+    done             BOOLEAN      NOT NULL DEFAULT FALSE,
+    assignee_id      INTEGER      REFERENCES sandes.users (id) ON DELETE SET NULL,
+    created_by       INTEGER      REFERENCES sandes.users (id) ON DELETE SET NULL,
+    done_by          INTEGER      REFERENCES sandes.users (id) ON DELETE SET NULL,
+    created_at       TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    done_at          TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS idx_tasks_conversation ON sandes.tasks (conversation_id);
+
+-- Shared notes: one document per chat, edited live by everyone (version counts edits)
+CREATE TABLE IF NOT EXISTS sandes.notes (
+    conversation_id  INTEGER     PRIMARY KEY REFERENCES sandes.conversations (id) ON DELETE CASCADE,
+    body             TEXT        NOT NULL DEFAULT '',
+    version          INTEGER     NOT NULL DEFAULT 0,
+    updated_by       INTEGER     REFERENCES sandes.users (id) ON DELETE SET NULL,
+    updated_at       TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- Board pages: each board can have several pages; every shape belongs to one
+CREATE TABLE IF NOT EXISTS sandes.board_pages (
+    id               SERIAL      PRIMARY KEY,
+    conversation_id  INTEGER     NOT NULL REFERENCES sandes.conversations (id) ON DELETE CASCADE,
+    name             VARCHAR(60) NOT NULL,
+    created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_board_pages_conversation ON sandes.board_pages (conversation_id);
+
+ALTER TABLE sandes.board_items ADD COLUMN IF NOT EXISTS page_id INTEGER
+    REFERENCES sandes.board_pages (id) ON DELETE CASCADE;
+ALTER TABLE sandes.board_items ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ;
+
+-- Drawings from before pages existed go on "Page 1"
+INSERT INTO sandes.board_pages (conversation_id, name)
+SELECT DISTINCT b.conversation_id, 'Page 1' FROM sandes.board_items b
+WHERE b.page_id IS NULL
+  AND NOT EXISTS (SELECT 1 FROM sandes.board_pages p WHERE p.conversation_id = b.conversation_id);
+UPDATE sandes.board_items b
+SET page_id = (SELECT min(p.id) FROM sandes.board_pages p WHERE p.conversation_id = b.conversation_id)
+WHERE b.page_id IS NULL;
+
+-- New settings
+INSERT INTO sandes.settings (key, value) VALUES
+    ('message_effects_enabled', 'true'),    -- confetti / rangoli / hearts / petals on send
+    ('users_can_create_groups', 'true'),    -- members may create groups and channels
+    ('festival_theme',          '"none"')   -- none | diwali | holi | durga_puja | christmas
+ON CONFLICT (key) DO NOTHING;
